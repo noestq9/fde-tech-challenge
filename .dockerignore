@@ -4,3 +4,6 @@ dist
 .git
 test
 coverage
+reports
+.env.*
+!.env.example

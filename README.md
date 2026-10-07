@@ -52,6 +52,14 @@ npm run smoke                 # checks the running API
 
 With TMS_HOST/TMS_PORT/TMS_TOKEN set in `.env`, `docker compose up --build api` runs against the real TMS.
 
+### Deploy (Railway)
+
+`railway.json` builds the same Dockerfile, checks `/health` and keeps **one replica**: call sessions live in memory, so two replicas would split a call's state. Set the variables from `.env.example` in the Railway dashboard (never in the repo), generate a public domain, then:
+
+```bash
+API_URL=https://<your-app>.up.railway.app npm run smoke
+```
+
 Without Docker: `npm install`, set `TMS_HOST=127.0.0.1`, `TMS_PORT=9100`, `TMS_TOKEN=dev-token` in `.env`, then `npm run tms:fake` in one terminal and `npm run dev` in another (the server reads `.env`).
 
 ## Testing
@@ -73,4 +81,5 @@ Mock FMCSA MC numbers: `123456` and `234567` eligible, `345678` no active author
 - [x] API, auth, FMCSA client (live + mock), OTP, negotiation, call record, Docker
 - [x] Legacy TMS TCP adapter, fake TMS, scenario runner
 - [ ] HappyRobot workflow, voice agent prompt, Twin and Apps dashboard
-- [ ] Cloud deploy, voice-level adversarial QA
+- [x] Cloud deploy config (Railway)
+- [ ] Voice-level adversarial QA
