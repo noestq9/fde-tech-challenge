@@ -16,11 +16,16 @@ const REQUEST_FIELDS: Record<Command, ReadonlySet<string>> = {
   DEBUG_ECHO: new Set(), // free-form: any field is echoed and counted
 };
 
-/** Max widths observed in the spec transcripts (§9). Longer values mean a malformed response. */
+/**
+ * Max widths per field. The manual doesn't list them; the real server (tms:dump, 2026-10-07) pads differently
+ * from the manual's transcripts: numbers are left-aligned and space-padded (RATE:1277    ) instead of zero-padded
+ * (RATE:0002150), and some text widths differ. We keep the larger of both, so either style parses and a value
+ * that overflows the column (a malformed-response fault) is still caught.
+ */
 export const FIELD_WIDTHS: Record<string, number> = {
   LOAD_ID: 12, ORIG_CITY: 30, ORIG_STATE: 2, ORIG_ZIP: 5, DEST_CITY: 30, DEST_STATE: 2, DEST_ZIP: 5,
-  PICKUP_DT: 14, DELIVERY_DT: 14, EQTYPE: 10, RATE: 7, WEIGHT: 7, COMMODITY: 32, PIECES: 6, MILES: 6,
-  DIMS: 35, NOTES: 114, STATUS: 8, MAX_BUY: 7, BOOKING_REF: 16, TIMESTAMP: 14,
+  PICKUP_DT: 14, DELIVERY_DT: 14, EQTYPE: 10, RATE: 8, WEIGHT: 8, COMMODITY: 32, PIECES: 6, MILES: 6,
+  DIMS: 35, NOTES: 120, STATUS: 8, MAX_BUY: 8, BOOKING_REF: 16, TIMESTAMP: 14,
 };
 
 export class ProtocolEncodeError extends Error {

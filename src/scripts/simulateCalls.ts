@@ -53,7 +53,7 @@ async function main() {
     return call(id, '/otp/verify', { code: codes.get(id) });
   };
   const finalize = async (id: string) => (await call(id, '/finalize')).record;
-  const lanes = ['dry van', 'reefer', 'flatbed', 'dry van', 'reefer'];
+  const lanes = ['dry van', 'reefer', 'flatbed', 'power only', 'dry van'];
   let lane = 0;
   /** Verified call with a pitched load (rotates equipment so bookings don't exhaust one lane). */
   const pitched = async (id: string) => {

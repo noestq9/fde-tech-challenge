@@ -29,7 +29,7 @@ First offer is `loadboard_rate`. On each carrier counter (up to 3):
 
 ## Pricing
 
-The TMS returns the listed rate (`RATE`) and, for flagged tokens, the broker ceiling (`MAX_BUY`). In the TMS data the ceiling is usually **below** the listed rate (e.g. RATE 2150, MAX_BUY 1950), so pitching the listed rate would already break it. The opening offer is therefore `min(RATE, MAX_BUY × OPENING_RATIO)` (0.9 by default) and counters move from there toward `MAX_BUY`. When a token has no `MAX_BUY`, the ceiling falls back to `RATE × FALLBACK_CEILING_RATIO`. The agent only ever sees `offer_rate`.
+The TMS returns the listed rate (`RATE`) and, for flagged tokens, the broker ceiling (`MAX_BUY`). The ceiling can sit on either side of the listed rate: the manual's examples have it below (RATE 2150, MAX_BUY 1950), the live server has it above (RATE 1277, MAX_BUY 1552). The opening offer is `min(RATE, MAX_BUY × OPENING_RATIO)` (0.9 by default), so we open at the listed rate when there is room above it and below the ceiling when there isn't, and counters move from there toward `MAX_BUY`. When a token has no `MAX_BUY`, the ceiling falls back to `RATE × FALLBACK_CEILING_RATIO`. The agent only ever sees `offer_rate`.
 
 ## Legacy TMS adapter
 
@@ -37,7 +37,7 @@ The TMS returns the listed rate (`RATE`) and, for flagged tokens, the broker cei
 
 - **Transport:** new TCP connection per request, per-attempt deadline, stops reading at `END`/`ERR` (handles "delayed termination"), rejects non-ASCII, bare `\n` and oversized frames.
 - **Encoder:** `CMD`, `AUTH` first; rejects `|`, CR/LF, non-ASCII and unknown fields (the server silently ignores them); token redacted in every log.
-- **Parser:** strict framing, parse by field name, width and type checks, blank `NOTES` → `null`, missing `MAX_BUY` → `null`.
+- **Parser:** strict framing, parse by field name, width and type checks, blank `NOTES` → `null`, missing `MAX_BUY` → `null`. Accepts both the manual's zero-padded numbers and the live server's space-padded ones (see `test/fixtures/real-wire-records.txt`, captured with `npm run tms:dump`).
 - **Resilience:** retries with jittered backoff inside an 8 s budget (the carrier is on the line), circuit breaker, clear error kinds.
 - **Booking idempotency:** a lost `LOAD_BOOK` response followed by `ALREADY_BOOKED` on retry is reported as `BOOKED_UNCONFIRMED` (the booking view is per token, so we booked it). If every attempt is ambiguous the result is `booking_unknown` and the call is handed to a rep, never reported as a silent success. Attempts can be journaled to `TMS_BOOKING_JOURNAL`.
 - **Fake TMS:** `src/fakeTms/` speaks the same protocol and injects the four fault types. Its seed data includes the spec transcripts.
@@ -61,6 +61,7 @@ Local development: `npm install`, `npm run tms:fake` in one terminal, `npm run d
 | `npm test` | Unit and integration tests: negotiation, OTP, API gates, protocol golden tests from the spec transcripts, client against the fake TMS with each fault forced |
 | `npm run sim:calls` | 22 scripted call scenarios (standard, edge, adversarial) through the API and the TCP adapter, with 20% injected faults. Writes `reports/*.md` |
 | `npm run sim:calls -- --real` | Same scenarios against the real TMS (books real loads for your token) |
+| `npm run tms:dump` | Raw responses from the real TMS with the parser's verdict on each (token redacted) |
 | `npm run tms:probe` | Read-only probe of the real TMS: echo conformance, MAX_BUY flag, EQTYPE values, date filter, fault profile, retry success rate |
 | `npm run fmcsa:check -- <MC>` | Live FMCSA lookup with your webKey |
 | `npm run smoke` | Health, auth and gates on a running deployment (`API_URL`) |

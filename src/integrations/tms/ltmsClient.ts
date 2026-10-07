@@ -193,7 +193,8 @@ export class LtmsClient implements TmsClient {
   }
 }
 
-const LOAD_ID_RE = /^[A-Z]{2}\d{10}$/;
+// Manual shows LD + 10 digits; the real server sends shorter ids padded with spaces ("LD00925     ").
+const LOAD_ID_RE = /^[A-Z]{2}\d{1,10}$/;
 const STATE_RE = /^[A-Z]{2}$/;
 const ZIP_RE = /^\d{5}$/;
 

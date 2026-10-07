@@ -77,7 +77,7 @@ describe('LTMS parser (spec transcripts)', () => {
     const good = summaries[0]!;
     expect(() => parseResponse([good])).toThrow(MalformedResponseError); // no END
     expect(() => parseResponse([good.replace('|', '||'), 'END'])).toThrow(MalformedResponseError); // extra delimiter
-    expect(() => parseResponse([good.replace('RATE:0002150', 'RATE:00021509'), 'END'])).toThrow(/width/); // too wide
+    expect(() => parseResponse([good.replace('RATE:0002150', 'RATE:000215099'), 'END'])).toThrow(/width/); // too wide
     expect(() => parseResponse([`${good}|RATE:0000001`, 'END'])).toThrow(/duplicate/);
   });
 
@@ -85,5 +85,32 @@ describe('LTMS parser (spec transcripts)', () => {
     const out = parseResponse([summaries[0]!.replace('RATE:0002150', 'RATE:00021X0'), 'END']);
     if (out.kind !== 'ok') throw new Error('expected ok');
     expect(() => toSummary(out.records[0]!)).toThrow(/integer/);
+  });
+});
+
+describe('LTMS parser (real server wire, captured with tms:dump)', () => {
+  const real = readFileSync(new URL('./fixtures/real-wire-records.txt', import.meta.url), 'utf8').split('\n').filter(Boolean);
+
+  it('parses space-padded numbers, short ids and the real widths', () => {
+    expect(real.length).toBeGreaterThanOrEqual(4);
+    for (const line of real) {
+      const out = parseResponse([line, 'END']);
+      if (out.kind !== 'ok') throw new Error('expected ok');
+      const rec = out.records[0]!;
+      const l = 'DELIVERY_DT' in rec ? toLoad(rec) : toSummary(rec);
+      expect(l.loadId).toMatch(/^LD\d+$/);
+      expect(Number.isInteger(l.loadboardRate)).toBe(true);
+    }
+  });
+
+  it('reads the real detail record', () => {
+    const line = real.find((l) => l.includes('DELIVERY_DT:'))!;
+    const out = parseResponse([line, 'END']);
+    if (out.kind !== 'ok') throw new Error('expected ok');
+    expect(toLoad(out.records[0]!)).toMatchObject({ loadId: 'LD00925', loadboardRate: 1277, maxRate: 1552, weight: 20692, numOfPieces: 8, notes: null, status: 'OPEN', dimensions: '45ft x 8ft x 9ft' });
+  });
+
+  it('still catches a value that overflows its column', () => {
+    expect(() => parseResponse([real[0]!.replace(/RATE:(\d+) +/, 'RATE:$1123456789'), 'END'])).toThrow(/width/);
   });
 });

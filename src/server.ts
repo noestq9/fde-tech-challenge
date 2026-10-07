@@ -344,6 +344,7 @@ export function normalizeEquipment(input?: string): string | undefined {
   if (!v) return undefined;
   if (v.includes('reefer') || v.includes('refrigerat')) return 'REEFER';
   if (v.includes('flat')) return 'FLATBED';
+  if (v.includes('power')) return 'POWER_ONLY';
   if (v.includes('van') || v.includes('dry')) return 'DRY_VAN';
   return v.toUpperCase();
 }

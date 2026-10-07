@@ -37,28 +37,34 @@ export const SEED: FakeLoad[] = [
   { LOAD_ID: 'LD0000047002', ORIG_CITY: 'Chicago', ORIG_STATE: 'IL', ORIG_ZIP: '60638', DEST_CITY: 'Atlanta', DEST_STATE: 'GA', DEST_ZIP: '30303', PICKUP_DT: '20261112100000', DELIVERY_DT: '20261113160000', EQTYPE: 'REEFER', RATE: 2450, WEIGHT: 41000, COMMODITY: 'FROZEN POULTRY', PIECES: 24, MILES: 716, DIMS: '48X40 CHEP PALLETS', NOTES: 'Reefer set 0F continuous.', MAX_BUY: 2200 },
   { LOAD_ID: 'LD0000047003', ORIG_CITY: 'Gary', ORIG_STATE: 'IN', ORIG_ZIP: '46402', DEST_CITY: 'Denver', DEST_STATE: 'CO', DEST_ZIP: '80202', PICKUP_DT: '20261113070000', DELIVERY_DT: '20261115120000', EQTYPE: 'FLATBED', RATE: 3300, WEIGHT: 44000, COMMODITY: 'STEEL COILS', PIECES: 6, MILES: 1015, DIMS: '72X72X60 COILS', NOTES: 'Tarps and chains required.', MAX_BUY: 2970 },
   { LOAD_ID: 'LD0000047004', ORIG_CITY: 'Chicago Heights', ORIG_STATE: 'IL', ORIG_ZIP: '60411', DEST_CITY: 'Columbus', DEST_STATE: 'OH', DEST_ZIP: '43215', PICKUP_DT: '20261112130000', DELIVERY_DT: '20261113090000', EQTYPE: 'DRY_VAN', RATE: 1250, WEIGHT: 22000, COMMODITY: 'PAPER PRODUCTS', PIECES: 18, MILES: 352, DIMS: '48X40 STD GMA PALLETS', NOTES: '', MAX_BUY: 1125 },
+  // Shaped like the real server's data (tms:dump): short ids, MAX_BUY above RATE, POWER_ONLY equipment.
+  { LOAD_ID: 'LD00925', ORIG_CITY: 'Houston', ORIG_STATE: 'TX', ORIG_ZIP: '77002', DEST_CITY: 'Memphis', DEST_STATE: 'TN', DEST_ZIP: '38103', PICKUP_DT: '20261014150500', DELIVERY_DT: '20261015100500', EQTYPE: 'DRY_VAN', RATE: 1277, WEIGHT: 20692, COMMODITY: 'General Freight', PIECES: 8, MILES: 484, DIMS: '45ft x 8ft x 9ft', NOTES: '', MAX_BUY: 1552 },
+  { LOAD_ID: 'LD00932', ORIG_CITY: 'Austin', ORIG_STATE: 'TX', ORIG_ZIP: '78701', DEST_CITY: 'Cincinnati', DEST_STATE: 'OH', DEST_ZIP: '45202', PICKUP_DT: '20261008071800', DELIVERY_DT: '20261009180000', EQTYPE: 'POWER_ONLY', RATE: 2950, WEIGHT: 30000, COMMODITY: 'Loaded Trailer', PIECES: 1, MILES: 967, DIMS: '53ft trailer', NOTES: 'Drop and hook.', MAX_BUY: 3350 },
 ];
 
 const padR = (s: string, n: number) => s.padEnd(n, ' ').slice(0, n);
 const padL = (v: number, n: number) => String(v).padStart(n, '0');
 
+// Field layout copied from the real server (tms:dump): text and numbers left-aligned, space-padded.
+const num = (v: number, n: number) => padR(String(v), n);
+
 function summaryLine(l: FakeLoad, status: string) {
   return [
-    `LOAD_ID:${l.LOAD_ID}`, `ORIG_CITY:${padR(l.ORIG_CITY, 30)}`, `ORIG_STATE:${l.ORIG_STATE}`, `ORIG_ZIP:${l.ORIG_ZIP}`,
+    `LOAD_ID:${padR(l.LOAD_ID, 12)}`, `ORIG_CITY:${padR(l.ORIG_CITY, 30)}`, `ORIG_STATE:${l.ORIG_STATE}`, `ORIG_ZIP:${l.ORIG_ZIP}`,
     `DEST_CITY:${padR(l.DEST_CITY, 30)}`, `DEST_STATE:${l.DEST_STATE}`, `DEST_ZIP:${l.DEST_ZIP}`, `PICKUP_DT:${l.PICKUP_DT}`,
-    `EQTYPE:${padR(l.EQTYPE, 10)}`, `RATE:${padL(l.RATE, 7)}`, `MILES:${padL(l.MILES, 6)}`, `STATUS:${status}`,
+    `EQTYPE:${padR(l.EQTYPE, 10)}`, `RATE:${num(l.RATE, 8)}`, `MILES:${num(l.MILES, 6)}`, `STATUS:${padR(status, 8)}`,
   ].join('|');
 }
 
 function detailLine(l: FakeLoad, status: string, exposeMaxBuy: boolean) {
   const parts = [
-    `LOAD_ID:${l.LOAD_ID}`, `ORIG_CITY:${padR(l.ORIG_CITY, 30)}`, `ORIG_STATE:${l.ORIG_STATE}`, `ORIG_ZIP:${l.ORIG_ZIP}`,
+    `LOAD_ID:${padR(l.LOAD_ID, 12)}`, `ORIG_CITY:${padR(l.ORIG_CITY, 30)}`, `ORIG_STATE:${l.ORIG_STATE}`, `ORIG_ZIP:${l.ORIG_ZIP}`,
     `DEST_CITY:${padR(l.DEST_CITY, 30)}`, `DEST_STATE:${l.DEST_STATE}`, `DEST_ZIP:${l.DEST_ZIP}`, `PICKUP_DT:${l.PICKUP_DT}`,
-    `DELIVERY_DT:${l.DELIVERY_DT}`, `EQTYPE:${padR(l.EQTYPE, 10)}`, `RATE:${padL(l.RATE, 7)}`, `WEIGHT:${padL(l.WEIGHT, 7)}`,
-    `COMMODITY:${padR(l.COMMODITY, 32)}`, `PIECES:${padL(l.PIECES, 6)}`, `MILES:${padL(l.MILES, 6)}`, `DIMS:${padR(l.DIMS, 35)}`,
-    `NOTES:${padR(l.NOTES, 114)}`, `STATUS:${padR(status, 8)}`,
+    `DELIVERY_DT:${l.DELIVERY_DT}`, `EQTYPE:${padR(l.EQTYPE, 10)}`, `RATE:${num(l.RATE, 8)}`, `WEIGHT:${num(l.WEIGHT, 8)}`,
+    `COMMODITY:${padR(l.COMMODITY, 30)}`, `PIECES:${num(l.PIECES, 6)}`, `MILES:${num(l.MILES, 6)}`, `DIMS:${padR(l.DIMS, 30)}`,
+    `NOTES:${padR(l.NOTES, 120)}`, `STATUS:${padR(status, 8)}`,
   ];
-  if (exposeMaxBuy) parts.push(`MAX_BUY:${padL(l.MAX_BUY, 7)}`);
+  if (exposeMaxBuy) parts.push(`MAX_BUY:${num(l.MAX_BUY, 8)}`);
   return parts.join('|');
 }
 
@@ -101,7 +107,7 @@ export function startFakeTms(port: number, opts: FakeTmsOptions) {
       case 'malformed': {
         const variants = [
           payload.replace('|', '||'), // extra delimiter
-          payload.replace(/RATE:(\d{7})/, 'RATE:$1999'), // value exceeds width
+          payload.replace(/RATE:(\d+) */, 'RATE:$1123456789'), // value exceeds width
           payload.replace(/\r\n/, '\n'), // unterminated line
         ];
         sock.end(variants[Math.floor(rnd() * variants.length)]);
@@ -168,13 +174,13 @@ export function startFakeTms(port: number, opts: FakeTmsOptions) {
           return respond(sock, [...hits.map((l) => summaryLine(l, statusOf(l.LOAD_ID))), 'END'], fault);
         }
         case 'LOAD_GET': {
-          const l = SEED.find((x) => x.LOAD_ID === req.LOAD_ID);
+          const l = SEED.find((x) => x.LOAD_ID === req.LOAD_ID?.trim());
           if (!l) return respond(sock, ['ERR|CODE:UNKNOWN_LOAD|MSG:load not found'], fault);
           return respond(sock, [detailLine(l, statusOf(l.LOAD_ID), opts.exposeMaxBuy), 'END'], fault);
         }
         case 'LOAD_BOOK': {
           if (!req.LOAD_ID || !req.MC_NUM || !req.AGREED_RATE) return respond(sock, ['ERR|CODE:MISSING_FIELD|MSG:missing required field'], fault);
-          const l = SEED.find((x) => x.LOAD_ID === req.LOAD_ID);
+          const l = SEED.find((x) => x.LOAD_ID === req.LOAD_ID?.trim());
           if (!l) return respond(sock, ['ERR|CODE:UNKNOWN_LOAD|MSG:load not found'], fault);
           if (mine.has(l.LOAD_ID)) return respond(sock, ['ERR|CODE:ALREADY_BOOKED|MSG:load not available'], fault);
           const rate = Number(req.AGREED_RATE);
@@ -184,7 +190,7 @@ export function startFakeTms(port: number, opts: FakeTmsOptions) {
           mine.add(l.LOAD_ID);
           const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
           const ref = `BR${padL(Math.floor(rnd() * 1e14), 14)}`;
-          return respond(sock, [`LOAD_ID:${l.LOAD_ID}|BOOKING_REF:${ref}|STATUS:BOOKED  |TIMESTAMP:${ts}`, 'END'], fault);
+          return respond(sock, [`LOAD_ID:${padR(l.LOAD_ID, 12)}|BOOKING_REF:${ref}|STATUS:BOOKED  |TIMESTAMP:${ts}`, 'END'], fault);
         }
         default:
           return respond(sock, ['ERR|CODE:UNKNOWN_CMD|MSG:unknown command'], null);
