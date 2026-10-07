@@ -38,6 +38,7 @@ const schema = z.object({
   // "console" logs the code (dev only). "webhook" posts it to a HappyRobot workflow that sends SMS/email.
   OTP_DELIVERY: z.enum(['console', 'webhook']).default('console'),
   OTP_WEBHOOK_URL: z.string().url().optional(),
+  // HappyRobot API key (Settings -> API Keys) that the workflow's Webhook (API) trigger accepts.
   OTP_WEBHOOK_SECRET: z.string().optional(),
   // Demo only: send every OTP to this phone (E.164) or email instead of the carrier's contact.
   // Lets you receive codes yourself and avoids texting real carriers from FMCSA data. Refused in production.

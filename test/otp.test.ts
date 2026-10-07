@@ -56,3 +56,28 @@ describe('OTP', () => {
     expect(maskAddress('email', 'dispatch@acme.com')).toBe('d***@acme.com');
   });
 });
+
+describe('WebhookOtpDelivery', () => {
+  it('posts the code to the HappyRobot trigger with a Bearer token', async () => {
+    const { createServer } = await import('node:http');
+    const { WebhookOtpDelivery } = await import('../src/integrations/otpDelivery.js');
+    let seen: { auth?: string; body?: unknown } = {};
+    const srv = createServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => (raw += c));
+      req.on('end', () => {
+        seen = { auth: req.headers.authorization, body: JSON.parse(raw) };
+        res.end('{}');
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const { port } = srv.address() as { port: number };
+    try {
+      await new WebhookOtpDelivery(`http://127.0.0.1:${port}/hooks/send-otp`, 'hr-key').send(to, '482913', { callId: 'run-1', mcNumber: '123456' });
+    } finally {
+      srv.close();
+    }
+    expect(seen.auth).toBe('Bearer hr-key');
+    expect(seen.body).toEqual({ channel: 'sms', to: '+14045550101', code: '482913', call_id: 'run-1', mc_number: '123456' });
+  });
+});

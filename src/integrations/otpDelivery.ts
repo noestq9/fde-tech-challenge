@@ -11,8 +11,9 @@ export class ConsoleOtpDelivery implements OtpDelivery {
 }
 
 /**
- * Posts the code to a separate HappyRobot workflow (webhook trigger -> SMS/email node).
- * Keeps delivery on the platform while the code never passes through the voice agent's context.
+ * Posts the code to a separate HappyRobot workflow (Webhook (API) trigger -> Send SMS / email node).
+ * Keeps delivery on the platform while the code never passes through the voice agent's run.
+ * The trigger authenticates with a HappyRobot API key, sent as a Bearer token.
  */
 export class WebhookOtpDelivery implements OtpDelivery {
   constructor(private readonly url: string, private readonly secret: string, private readonly timeoutMs = 5000) {}
@@ -24,7 +25,7 @@ export class WebhookOtpDelivery implements OtpDelivery {
           const res = await fetch(this.url, {
             method: 'POST',
             signal,
-            headers: { 'content-type': 'application/json', 'x-webhook-secret': this.secret },
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${this.secret}` },
             body: JSON.stringify({ channel: to.channel, to: to.address, code, call_id: ctx.callId, mc_number: ctx.mcNumber }),
           });
           if (!res.ok) throw new Error(`otp webhook returned ${res.status}`);
