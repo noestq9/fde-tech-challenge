@@ -89,6 +89,14 @@ docker compose logs api | grep "DEV OTP" | tail -1
 
 Body opcional: `{"caller_contact":"+15551234567"}`. Solo se usa si el carrier no tiene contacto registrado. Si lo tiene, se ignora.
 
+**A dónde va el código**, por prioridad:
+1. `OTP_DEMO_CONTACT` del `.env`, si está definido. Todos los códigos van a tu teléfono o email (modo demo).
+2. El contacto del carrier en el directorio.
+3. El teléfono que devuelve FMCSA.
+4. `caller_contact` del body.
+
+Si no hay ninguno, la respuesta es `no_contact_on_file` y el agente pide un número. Para pruebas locales, pon tu número en `OTP_DEMO_CONTACT` (formato E.164, por ejemplo `+5215512345678`) o manda `caller_contact` en el body.
+
 ## 4. Verificar el OTP
 
 ```bash

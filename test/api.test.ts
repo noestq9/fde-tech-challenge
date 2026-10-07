@@ -142,3 +142,23 @@ describe('health', () => {
     expect((await app.inject({ method: 'GET', url: '/healt' })).statusCode).toBe(401);
   });
 });
+
+describe('OTP demo contact', () => {
+  it('sends every code to OTP_DEMO_CONTACT, even for carriers with no contact on file', async () => {
+    const sent: string[] = [];
+    const demo = buildServer(loadConfig({ API_KEY, LOG_LEVEL: 'silent', OTP_DEMO_CONTACT: '+15550001234' } as NodeJS.ProcessEnv), {
+      otpDelivery: { send: async (to) => void sent.push(to.address) },
+      fmcsa: { verifyMc: async (mc) => ({ status: 'eligible', carrier: { mcNumber: mc, legalName: 'No Phone LLC' } }) },
+    });
+    const h = { 'x-api-key': API_KEY };
+    await demo.inject({ method: 'POST', url: '/v1/calls/d1/verify-carrier', payload: { mc_number: '777777' }, headers: h });
+    const r = (await demo.inject({ method: 'POST', url: '/v1/calls/d1/otp/send', payload: {}, headers: h })).json();
+    expect(r).toMatchObject({ sent: true, channel: 'sms', sent_to: '***-***-1234' });
+    expect(sent).toEqual(['+15550001234']);
+    expect((await demo.inject({ method: 'POST', url: '/v1/calls/d1/finalize', payload: {}, headers: h })).json().record.otp_source).toBe('demo');
+  });
+
+  it('refuses to start in production with a demo contact', () => {
+    expect(() => loadConfig({ API_KEY, NODE_ENV: 'production', OTP_DEMO_CONTACT: '+15550001234' } as NodeJS.ProcessEnv)).toThrow(/OTP_DEMO_CONTACT/);
+  });
+});

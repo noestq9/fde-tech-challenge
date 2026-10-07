@@ -39,6 +39,9 @@ const schema = z.object({
   OTP_DELIVERY: z.enum(['console', 'webhook']).default('console'),
   OTP_WEBHOOK_URL: z.string().url().optional(),
   OTP_WEBHOOK_SECRET: z.string().optional(),
+  // Demo only: send every OTP to this phone (E.164) or email instead of the carrier's contact.
+  // Lets you receive codes yourself and avoids texting real carriers from FMCSA data. Refused in production.
+  OTP_DEMO_CONTACT: z.string().min(5).max(254).optional(),
 
   // Negotiation: share of the (max_rate - loadboard_rate) gap conceded on each counter round.
   NEGOTIATION_STEPS: z
@@ -68,6 +71,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (cfg.OTP_DELIVERY === 'webhook' && !(cfg.OTP_WEBHOOK_URL && cfg.OTP_WEBHOOK_SECRET)) {
     throw new Error('OTP_WEBHOOK_URL and OTP_WEBHOOK_SECRET are required when OTP_DELIVERY=webhook');
+  }
+  if (cfg.OTP_DEMO_CONTACT && env.NODE_ENV === 'production' && env.ALLOW_OTP_DEMO !== 'true') {
+    throw new Error('OTP_DEMO_CONTACT is set in production. Remove it, or set ALLOW_OTP_DEMO=true for a demo deployment.');
   }
   if (cfg.NEGOTIATION_STEPS.length !== 3) throw new Error('NEGOTIATION_STEPS needs exactly 3 values (one per round)');
   return cfg;

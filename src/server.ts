@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Config } from './config.js';
-import { CallSessionStore, summarize, type Outcome } from './domain/callSession.js';
+import { CallSessionStore, summarize, type OtpSource, type Outcome } from './domain/callSession.js';
 import { StaticCarrierDirectory, type CarrierDirectory } from './domain/carrierDirectory.js';
 import { applyMove, priceLoad, startNegotiation, type NegotiationPolicy } from './domain/negotiation.js';
 import { OtpService, maskAddress, type OtpDelivery } from './domain/otp.js';
@@ -130,10 +130,12 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
       return { ok: false, error: 'carrier_not_verified', agent_guidance: 'Verify the MC number first.' };
     }
 
-    // Destination priority: carrier record on file, then FMCSA phone, then (new carriers only) what the caller gives.
-    let dest: { channel: 'sms' | 'email'; address: string; source: 'directory' | 'fmcsa' | 'caller_provided' } | null = null;
+    // Destination priority: demo override (never in production), carrier record on file, FMCSA phone,
+    // then (new carriers only) what the caller gives.
+    let dest: { channel: 'sms' | 'email'; address: string; source: OtpSource } | null = null;
     const onFile = await directory.contactFor(s.mcNumber);
-    if (onFile) dest = { ...onFile, source: 'directory' };
+    if (cfg.OTP_DEMO_CONTACT) dest = { channel: cfg.OTP_DEMO_CONTACT.includes('@') ? 'email' : 'sms', address: cfg.OTP_DEMO_CONTACT, source: 'demo' };
+    else if (onFile) dest = { ...onFile, source: 'directory' };
     else if (s.carrier?.phone) dest = { channel: 'sms', address: s.carrier.phone, source: 'fmcsa' };
     else if (body.caller_contact) {
       const channel = body.caller_contact.includes('@') ? 'email' : 'sms';

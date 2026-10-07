@@ -14,6 +14,9 @@ export type Outcome =
   | 'integration_error'
   | 'abandoned';
 
+/** demo = OTP_DEMO_CONTACT override, for demos only. */
+export type OtpSource = 'demo' | 'directory' | 'fmcsa' | 'caller_provided';
+
 export interface CallSession {
   callId: string;
   startedAt: string;
@@ -22,7 +25,7 @@ export interface CallSession {
   carrier?: CarrierProfile;
   fmcsaStatus?: string;
   fmcsaReasons?: string[];
-  otp?: { channel: 'sms' | 'email'; masked: string; source: 'directory' | 'fmcsa' | 'caller_provided' };
+  otp?: { channel: 'sms' | 'email'; masked: string; source: OtpSource };
   otpVerified: boolean;
   search?: { origin?: string; destination?: string; equipmentType?: string; resultCount: number };
   loadsOffered: string[];
