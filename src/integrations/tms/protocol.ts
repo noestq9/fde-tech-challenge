@@ -101,7 +101,7 @@ function parseRecord(line: string): TmsRecord {
     }
     const key = part.slice(0, idx);
     const value = part.slice(idx + 1);
-    if (!/^[A-Z_]+$/.test(key)) throw new MalformedResponseError(`bad field name "${key.slice(0, 20)}"`);
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new MalformedResponseError(`bad field name "${key.slice(0, 20)}"`);
     if (key in rec) throw new MalformedResponseError(`duplicate field ${key}`);
     const width = FIELD_WIDTHS[key];
     if (width !== undefined && value.length > width) throw new MalformedResponseError(`${key} exceeds width ${width}`);

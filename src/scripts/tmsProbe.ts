@@ -19,6 +19,8 @@ const timeoutMs = Number(process.env.TMS_TIMEOUT_MS ?? 3000);
 
 const client = new LtmsClient({ host, port, token, connectTimeoutMs: 2000, requestTimeoutMs: timeoutMs, retries: 3, budgetMs: 15000, maxResults: 10 });
 const ok = (b: boolean) => (b ? 'PASS' : 'FAIL');
+/** First error message seen per error type, so the report says why, not just what. */
+const reasons: Record<string, string> = {};
 const results: Array<[string, string, string]> = [];
 const record = (check: string, status: string, detail: string) => {
   results.push([check, status, detail]);
@@ -32,7 +34,9 @@ async function raw(fields: Record<string, string | number>, cmd: 'LOAD_QUERY' | 
     const out = parseResponse(lines);
     return { category: out.kind === 'ok' ? 'ok' : `err:${out.code}`, ms: Date.now() - t0, out };
   } catch (err) {
-    return { category: (err as Error).name, ms: Date.now() - t0, out: null };
+    const e = err as Error;
+    reasons[e.name] ??= e.message;
+    return { category: e.name, ms: Date.now() - t0, out: null };
   }
 }
 
@@ -51,7 +55,7 @@ async function main() {
 
   // 2. Search through the resilient client
   const found = await client.searchLoads({ originState: 'GA', equipmentType: 'DRY_VAN' }).catch((e) => e as Error);
-  if (found instanceof Error) record('LOAD_QUERY via client', 'FAIL', found.message);
+  if (found instanceof Error) record('LOAD_QUERY via client', 'FAIL', `${(found as any).kind ?? ''} ${found.message}`);
   else record('LOAD_QUERY via client', 'PASS', `${found.length} loads, e.g. ${found[0]?.loadId ?? '-'}`);
 
   // 3. Detail + MAX_BUY flag on this token
@@ -117,6 +121,7 @@ async function main() {
     record('STATUS after booking', 'INFO', after?.status ?? 'unknown');
   }
 
+  if (Object.keys(reasons).length) record('First error per type', 'INFO', Object.entries(reasons).map(([k, v]) => `${k}: ${v}`).join(' ; '));
   console.log('\n| Check | Result | Detail |\n|---|---|---|');
   for (const [c, s, d] of results) console.log(`| ${c} | ${s} | ${d.replace(/\|/g, '/')} |`);
   process.exit(results.some(([, s]) => s === 'FAIL') ? 1 : 0);
