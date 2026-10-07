@@ -133,3 +133,12 @@ describe('API', () => {
     for (const b of bodies) expect(b).not.toMatch(/max_?rate|max_?buy|ceiling"/i);
   });
 });
+
+describe('health', () => {
+  it('is public with a trailing slash or query string', async () => {
+    for (const url of ['/health', '/health/', '/health?probe=1']) expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
+  });
+  it('still hides unknown routes behind auth', async () => {
+    expect((await app.inject({ method: 'GET', url: '/healt' })).statusCode).toBe(401);
+  });
+});

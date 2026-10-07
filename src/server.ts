@@ -26,6 +26,7 @@ export interface Deps {
 
 export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
   const app = Fastify({
+    ignoreTrailingSlash: true,
     logger: { level: cfg.LOG_LEVEL, redact: ['req.headers["x-api-key"]', 'req.headers.authorization'] },
     genReqId: () => randomUUID(),
   });
@@ -53,7 +54,8 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
   // --- Auth: every route except /health needs the shared API key. ---
   const expected = Buffer.from(cfg.API_KEY);
   app.addHook('onRequest', async (req, reply) => {
-    if (req.url === '/health') return;
+    // Match on the routed path, so /health?x=1 and /health/ are public too. Unknown routes still need the key.
+    if (req.routeOptions.url === '/health') return;
     const given = Buffer.from(String(req.headers['x-api-key'] ?? ''));
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
       return reply.code(401).send({ ok: false, error: 'unauthorized' });
