@@ -30,7 +30,9 @@ export interface Pricing {
 export function priceLoad(listedRate: number, maxBuy: number | null, policy: NegotiationPolicy): Pricing {
   const ceilingSource = maxBuy != null && maxBuy > 0 ? 'max_buy' : 'fallback';
   const ceiling = ceilingSource === 'max_buy' ? maxBuy! : Math.floor(listedRate * policy.fallbackCeilingRatio);
-  const opening = roundDown(Math.min(listedRate, ceiling * policy.openingRatio), policy.rounding);
+  const capped = ceiling * policy.openingRatio;
+  // Offer the listed rate exactly when there is room above it; only a computed opening gets rounded.
+  const opening = listedRate <= capped ? listedRate : roundDown(capped, policy.rounding);
   return { listedRate, ceiling, opening: Math.min(opening, ceiling), ceilingSource };
 }
 
