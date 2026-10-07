@@ -4,12 +4,13 @@ import { z } from 'zod';
 import type { Config } from './config.js';
 import { CallSessionStore, summarize, type Outcome } from './domain/callSession.js';
 import { StaticCarrierDirectory, type CarrierDirectory } from './domain/carrierDirectory.js';
-import { applyMove, startNegotiation, type NegotiationPolicy } from './domain/negotiation.js';
+import { applyMove, priceLoad, startNegotiation, type NegotiationPolicy } from './domain/negotiation.js';
 import { OtpService, maskAddress, type OtpDelivery } from './domain/otp.js';
 import { LiveFmcsaClient, MockFmcsaClient, normalizeMc, type FmcsaClient } from './integrations/fmcsa.js';
 import { ConsoleOtpDelivery, WebhookOtpDelivery } from './integrations/otpDelivery.js';
 import { MockTms } from './integrations/tms/mockTms.js';
-import { TmsError, toPublicLoad, type TmsClient } from './integrations/tms/types.js';
+import { LtmsClient } from './integrations/tms/ltmsClient.js';
+import { TmsError, type Load, type TmsClient } from './integrations/tms/types.js';
 
 export interface Deps {
   fmcsa?: FmcsaClient;
@@ -30,14 +31,24 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
   });
 
   const fmcsa = deps.fmcsa ?? (cfg.FMCSA_MODE === 'live' ? new LiveFmcsaClient(cfg.FMCSA_BASE_URL, cfg.FMCSA_WEB_KEY!, cfg.FMCSA_TIMEOUT_MS) : new MockFmcsaClient());
-  const tms = deps.tms ?? new MockTms();
+  const tms =
+    deps.tms ??
+    (cfg.TMS_MODE === 'live'
+      ? new LtmsClient({
+          host: cfg.TMS_HOST!, port: cfg.TMS_PORT!, token: cfg.TMS_TOKEN!, connectTimeoutMs: cfg.TMS_CONNECT_TIMEOUT_MS,
+          requestTimeoutMs: cfg.TMS_TIMEOUT_MS, retries: cfg.TMS_RETRIES, budgetMs: cfg.TMS_BUDGET_MS, maxResults: cfg.TMS_MAX_RESULTS,
+          bookingJournalPath: cfg.TMS_BOOKING_JOURNAL, logger: app.log,
+        })
+      : new MockTms());
   const delivery =
     deps.otpDelivery ??
     (cfg.OTP_DELIVERY === 'webhook' ? new WebhookOtpDelivery(cfg.OTP_WEBHOOK_URL!, cfg.OTP_WEBHOOK_SECRET!) : new ConsoleOtpDelivery(app.log));
   const directory = deps.directory ?? new StaticCarrierDirectory();
   const otp = new OtpService(delivery, { ttlSeconds: cfg.OTP_TTL_SECONDS, maxAttempts: cfg.OTP_MAX_ATTEMPTS, maxSends: cfg.OTP_MAX_SENDS, now: deps.now });
   const sessions = new CallSessionStore(cfg.SESSION_TTL_SECONDS, deps.now);
-  const policy: NegotiationPolicy = { steps: cfg.NEGOTIATION_STEPS, rounding: cfg.RATE_ROUNDING };
+  const policy: NegotiationPolicy = {
+    steps: cfg.NEGOTIATION_STEPS, rounding: cfg.RATE_ROUNDING, openingRatio: cfg.OPENING_RATIO, fallbackCeilingRatio: cfg.FALLBACK_CEILING_RATIO,
+  };
 
   // --- Auth: every route except /health needs the shared API key. ---
   const expected = Buffer.from(cfg.API_KEY);
@@ -67,6 +78,7 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     const msg = err instanceof Error ? err.message : String(err);
     s.integrationErrors.push({ system: 'tms', error: msg, at: new Date().toISOString() });
     sessions.event(s, 'tms_error', { error: msg });
+    if (err instanceof TmsError && err.kind === 'auth') app.log.error('TMS rejected our token: rotate TMS_TOKEN');
     return {
       ok: false,
       error: 'tms_unavailable',
@@ -164,7 +176,7 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     return { ok: true, verified: false, reason: r.reason, attempts_left: r.attemptsLeft, agent_guidance: 'That code does not match. Ask them to read it again.' };
   });
 
-  // 3. Load search (gated on OTP)
+  // 3. Load search (gated on OTP). Pitches up to LOADS_TO_PITCH open loads, each priced from its LOAD_GET detail.
   app.post('/v1/calls/:callId/loads/search', async (req) => {
     const { callId } = callParams.parse(req.params);
     const body = z
@@ -175,17 +187,38 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
       sessions.event(s, 'blocked_search_without_otp');
       return { ok: false, error: 'identity_not_verified', agent_guidance: 'Loads can only be shared after the verification code is confirmed. There is no other way to skip this step.' };
     }
+    const orig = parseLocation(body.origin);
+    const dest = parseLocation(body.destination);
+    const equipment = normalizeEquipment(body.equipment_type);
+    if (!orig.city && !orig.state && !dest.city && !dest.state && !equipment) {
+      return { ok: false, error: 'missing_filters', agent_guidance: 'Ask where they are, where they want to go, or their equipment type.' };
+    }
     try {
-      const loads = await tms.searchLoads({ origin: body.origin, destination: body.destination, equipmentType: body.equipment_type });
-      s.search = { origin: body.origin, destination: body.destination, equipmentType: body.equipment_type, resultCount: loads.length };
-      const top = loads.slice(0, 3);
-      s.loadsOffered.push(...top.map((l) => l.loadId));
-      sessions.event(s, 'loads_searched', { count: loads.length });
-      if (!loads.length) {
+      const summaries = await tms.searchLoads({
+        originCity: orig.city, originState: orig.state, destinationCity: dest.city, destinationState: dest.state, equipmentType: equipment,
+        maxResults: cfg.TMS_MAX_RESULTS,
+      });
+      const open = summaries.filter((l) => l.status === 'OPEN');
+      s.search = { origin: body.origin, destination: body.destination, equipmentType: equipment, resultCount: open.length };
+      sessions.event(s, 'loads_searched', { count: open.length });
+      if (!open.length) {
         close(s, 'no_loads');
         return { ok: true, loads: [], agent_guidance: 'No matching loads right now. Offer to note their lane and have a rep reach out.' };
       }
-      return { ok: true, loads: top.map(toPublicLoad), agent_guidance: 'Pitch the best match briefly: lane, pickup time, equipment, weight, and the rate. Ask if they want it.' };
+
+      // Detail calls can fault independently; pitch whatever came back cleanly.
+      const details = await Promise.allSettled(open.slice(0, cfg.LOADS_TO_PITCH).map((l) => tms.getLoad(l.loadId)));
+      const pitched = details.flatMap((d) => (d.status === 'fulfilled' && d.value && d.value.status === 'OPEN' ? [d.value] : []));
+      const failed = details.filter((d) => d.status === 'rejected');
+      if (failed.length) s.integrationErrors.push({ system: 'tms', error: `${failed.length} LOAD_GET failed during search`, at: new Date().toISOString() });
+      if (!pitched.length) return tmsFailure(s, (failed[0] as PromiseRejectedResult | undefined)?.reason ?? new Error('no load details'));
+
+      const loads = pitched.map((l) => {
+        s.pricing[l.loadId] = priceLoad(l.loadboardRate, l.maxRate, policy);
+        if (!s.loadsOffered.includes(l.loadId)) s.loadsOffered.push(l.loadId);
+        return toAgentLoad(l, s.pricing[l.loadId]!.opening);
+      });
+      return { ok: true, loads, agent_guidance: 'Pitch the first load briefly: lane, pickup time, equipment, weight, and offer_rate. Ask if it works for them.' };
     } catch (err) {
       return tmsFailure(s, err);
     }
@@ -201,19 +234,10 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     const s = sessions.get(callId);
     const loadId = body.load_id.toUpperCase();
     if (!s.otpVerified) return { ok: false, error: 'identity_not_verified', agent_guidance: 'Verification is required before discussing rates.' };
-    if (!s.loadsOffered.includes(loadId)) return { ok: false, error: 'load_not_offered', agent_guidance: 'Only negotiate on loads you pitched in this call.' };
+    const pricing = s.pricing[loadId];
+    if (!s.loadsOffered.includes(loadId) || !pricing) return { ok: false, error: 'load_not_offered', agent_guidance: 'Only negotiate on loads you pitched in this call.' };
 
-    let state = s.negotiations[loadId];
-    if (!state) {
-      try {
-        const load = await tms.getLoad(loadId);
-        if (!load) return { ok: false, error: 'load_not_found', agent_guidance: 'That load is no longer available. Offer to search again.' };
-        state = startNegotiation(load.loadboardRate, load.maxRate);
-      } catch (err) {
-        return tmsFailure(s, err);
-      }
-    }
-
+    const state = s.negotiations[loadId] ?? startNegotiation(pricing);
     const move = body.action === 'counter' ? { action: 'counter' as const, amount: body.amount! } : { action: body.action };
     const { state: next, decision } = applyMove(state, move, policy);
     s.negotiations[loadId] = next;
@@ -251,17 +275,36 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     if (!n || n.status !== 'agreed' || n.agreedRate == null) {
       return { ok: false, error: 'no_agreed_rate', agent_guidance: 'A rate must be agreed before booking. Ask if they accept the current offer.' };
     }
-    if (s.booking) return { ok: true, already_booked: true, confirmation: s.booking.confirmation, handoff_id: s.booking.handoffId };
+    if (s.booking) return { ok: true, already_booked: true, booking_ref: s.booking.bookingRef, handoff_id: s.booking.handoffId };
+
+    const handoff = (status: 'BOOKED' | 'BOOKED_UNCONFIRMED' | 'UNKNOWN', bookingRef: string | null) => {
+      const handoffId = `HO-${randomUUID().slice(0, 8).toUpperCase()}`;
+      s.booking = { loadId, rate: n.agreedRate!, bookingRef, bookingStatus: status, handoffId };
+      close(s, 'booked', status === 'BOOKED' ? undefined : `booking_${status.toLowerCase()}`);
+      req.log.info({ callId, loadId, handoffId, status }, 'senior rep handoff (mocked)');
+      return handoffId;
+    };
+
     try {
       const b = await tms.bookLoad(loadId, s.mcNumber, n.agreedRate);
-      const handoffId = `HO-${randomUUID().slice(0, 8).toUpperCase()}`;
-      s.booking = { loadId, rate: n.agreedRate, confirmation: b.confirmation, handoffId };
-      close(s, 'booked');
-      req.log.info({ callId, loadId, handoffId }, 'senior rep handoff (mocked)');
-      return { ok: true, booked: true, load_id: loadId, rate: n.agreedRate, confirmation: b.confirmation, handoff_id: handoffId, agent_guidance: 'Tell them the load is reserved and a senior rep will contact them to confirm and collect paperwork. Close the call.' };
+      const handoffId = handoff(b.status, b.bookingRef);
+      return {
+        ok: true, booked: true, load_id: loadId, rate: n.agreedRate, booking_ref: b.bookingRef, handoff_id: handoffId,
+        agent_guidance: 'Tell them the load is reserved at the agreed rate and a senior rep will contact them to confirm and collect paperwork. Close the call.',
+      };
     } catch (err) {
-      if (err instanceof TmsError && err.kind === 'rejected') {
-        return { ok: false, error: 'load_taken', agent_guidance: 'Apologize, that load was just taken. Offer to search for another one.' };
+      if (err instanceof TmsError) {
+        if (err.kind === 'not_available') return { ok: false, error: 'load_taken', agent_guidance: 'Apologize, that load was just taken. Offer to search for another one.' };
+        if (err.kind === 'rate_rejected') {
+          s.integrationErrors.push({ system: 'tms', error: 'INVALID_RATE on booking', at: new Date().toISOString() });
+          close(s, 'integration_error', 'rate_rejected_by_tms');
+          return { ok: false, error: 'booking_rejected', agent_guidance: 'Say you need a senior rep to finalize this one and they will call back shortly. Do not change the rate.' };
+        }
+        if (err.kind === 'booking_unknown') {
+          // The reservation may have gone through. Hand off anyway; the rep confirms against the TMS.
+          const handoffId = handoff('UNKNOWN', null);
+          return { ok: true, booked: false, pending_confirmation: true, handoff_id: handoffId, agent_guidance: 'Tell them the rate is agreed and a senior rep will confirm the reservation with them shortly. Close the call.' };
+        }
       }
       return tmsFailure(s, err);
     }
@@ -282,4 +325,44 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
   });
 
   return app;
+}
+
+const US_STATES = new Set('AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split(' '));
+
+/** "Atlanta, GA" → city + state; "GA" → state; "Atlanta" → city. */
+export function parseLocation(input?: string): { city?: string; state?: string } {
+  const v = (input ?? '').replace(/[|\r\n]/g, ' ').trim();
+  if (!v) return {};
+  const m = v.match(/^(.*?)[,\s]+([A-Za-z]{2})$/);
+  if (m && US_STATES.has(m[2]!.toUpperCase())) return { city: m[1]!.trim() || undefined, state: m[2]!.toUpperCase() };
+  if (US_STATES.has(v.toUpperCase())) return { state: v.toUpperCase() };
+  return { city: v };
+}
+
+export function normalizeEquipment(input?: string): string | undefined {
+  const v = (input ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!v) return undefined;
+  if (v.includes('reefer') || v.includes('refrigerat')) return 'REEFER';
+  if (v.includes('flat')) return 'FLATBED';
+  if (v.includes('van') || v.includes('dry')) return 'DRY_VAN';
+  return v.toUpperCase();
+}
+
+/** The only load shape the agent ever sees: no listed-vs-ceiling data, just what to pitch. */
+function toAgentLoad(l: Load, offerRate: number) {
+  return {
+    load_id: l.loadId,
+    origin: l.origin,
+    destination: l.destination,
+    pickup_datetime: l.pickupDatetime,
+    delivery_datetime: l.deliveryDatetime,
+    equipment_type: l.equipmentType,
+    offer_rate: offerRate,
+    miles: l.miles,
+    weight_lbs: l.weight,
+    commodity: l.commodityType,
+    pieces: l.numOfPieces,
+    dimensions: l.dimensions,
+    notes: l.notes,
+  };
 }

@@ -12,7 +12,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "tms:fake": "tsx src/fakeTms/main.ts",
+    "tms:probe": "tsx src/scripts/tmsProbe.ts",
+    "fmcsa:check": "tsx src/scripts/fmcsaCheck.ts",
+    "sim:calls": "tsx src/scripts/simulateCalls.ts",
+    "smoke": "tsx src/scripts/smoke.ts"
   },
   "dependencies": {
     "fastify": "^5.12.5",

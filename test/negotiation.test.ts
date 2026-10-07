@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { applyMove, startNegotiation, type NegotiationPolicy, type NegotiationState } from '../src/domain/negotiation.js';
+import { applyMove, priceLoad, startNegotiation, type NegotiationPolicy, type NegotiationState } from '../src/domain/negotiation.js';
 
-const policy: NegotiationPolicy = { steps: [0.35, 0.7, 1.0], rounding: 5 };
+const policy: NegotiationPolicy = { steps: [0.35, 0.7, 1.0], rounding: 5, openingRatio: 0.9, fallbackCeilingRatio: 1.0 };
 const LB = 2100;
 const MAX = 2450;
 
 function run(moves: Parameters<typeof applyMove>[1][]) {
-  let s: NegotiationState = startNegotiation(LB, MAX);
+  let s: NegotiationState = startNegotiation(priceLoad(LB, MAX, policy));
   const decisions = [];
   for (const m of moves) {
     const r = applyMove(s, m, policy);
@@ -71,10 +71,22 @@ describe('negotiation policy', () => {
     }
   });
 
-  it('treats a ceiling below the listed rate as the listed rate', () => {
-    const s = startNegotiation(2000, 1800);
-    const r = applyMove(s, { action: 'counter', amount: 2500 }, policy);
-    expect(r.decision).toMatchObject({ decision: 'counter', rate: 2000 });
+  it('opens below the ceiling when MAX_BUY is under the listed rate (TMS data)', () => {
+    // Spec transcript: RATE 2150, MAX_BUY 1950
+    const p = priceLoad(2150, 1950, policy);
+    expect(p).toMatchObject({ opening: 1755, ceiling: 1950, ceilingSource: 'max_buy' });
+    let s = startNegotiation(p);
+    const rates = [];
+    for (const amount of [2300, 2250, 2200]) {
+      const r = applyMove(s, { action: 'counter', amount }, policy);
+      s = r.state;
+      rates.push((r.decision as any).rate);
+    }
+    expect(rates).toEqual([1820, 1890, 1950]);
+  });
+
+  it('falls back to the listed rate as ceiling when MAX_BUY is absent', () => {
+    expect(priceLoad(2150, null, policy)).toMatchObject({ ceiling: 2150, opening: 1935, ceilingSource: 'fallback' });
   });
 
   it('ignores moves after the negotiation is closed', () => {

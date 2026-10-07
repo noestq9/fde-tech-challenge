@@ -27,21 +27,49 @@ First offer is `loadboard_rate`. On each carrier counter (up to 3):
 - Otherwise we counter at `loadboard + (max − loadboard) × step[round]`, with steps `0.35, 0.70, 1.0` by default (`NEGOTIATION_STEPS`), rounded down to $5.
 - A 4th counter ends the negotiation as `failed_negotiation` with no transfer.
 
+## Pricing
+
+The TMS returns the listed rate (`RATE`) and, for flagged tokens, the broker ceiling (`MAX_BUY`). In the TMS data the ceiling is usually **below** the listed rate (e.g. RATE 2150, MAX_BUY 1950), so pitching the listed rate would already break it. The opening offer is therefore `min(RATE, MAX_BUY × OPENING_RATIO)` (0.9 by default) and counters move from there toward `MAX_BUY`. When a token has no `MAX_BUY`, the ceiling falls back to `RATE × FALLBACK_CEILING_RATIO`. The agent only ever sees `offer_rate`.
+
+## Legacy TMS adapter
+
+`src/integrations/tms/` implements the protocol in `docs/LEGACY_TMS_PROTOCOL_SPEC.md`:
+
+- **Transport:** new TCP connection per request, per-attempt deadline, stops reading at `END`/`ERR` (handles "delayed termination"), rejects non-ASCII, bare `\n` and oversized frames.
+- **Encoder:** `CMD`, `AUTH` first; rejects `|`, CR/LF, non-ASCII and unknown fields (the server silently ignores them); token redacted in every log.
+- **Parser:** strict framing, parse by field name, width and type checks, blank `NOTES` → `null`, missing `MAX_BUY` → `null`.
+- **Resilience:** retries with jittered backoff inside an 8 s budget (the carrier is on the line), circuit breaker, clear error kinds.
+- **Booking idempotency:** a lost `LOAD_BOOK` response followed by `ALREADY_BOOKED` on retry is reported as `BOOKED_UNCONFIRMED` (the booking view is per token, so we booked it). If every attempt is ambiguous the result is `booking_unknown` and the call is handed to a rep, never reported as a silent success. Attempts can be journaled to `TMS_BOOKING_JOURNAL`.
+- **Fake TMS:** `src/fakeTms/` speaks the same protocol and injects the four fault types. Its seed data includes the spec transcripts.
+
 ## Run
 
 ```bash
 cp .env.example .env          # set API_KEY (openssl rand -hex 32)
-docker compose up --build     # single command
-curl localhost:8080/health
+docker compose up --build     # API + fake TMS, single command
+npm run smoke                 # checks the running API
 ```
 
-Local development: `npm install && npm run dev`. Tests: `npm test`.
+With TMS_HOST/TMS_PORT/TMS_TOKEN set in `.env`, `docker compose up --build api` runs against the real TMS.
 
-`FMCSA_MODE=mock` and `TMS_MODE=mock` run without credentials. Mock MC numbers: `123456` and `234567` eligible, `345678` no active authority, `456789` not allowed to operate, `999999` FMCSA outage. A search with origin `timeout` simulates a TMS timeout.
+Local development: `npm install`, `npm run tms:fake` in one terminal, `npm run dev` in another.
+
+## Testing
+
+| Command | What it checks |
+|---|---|
+| `npm test` | Unit and integration tests: negotiation, OTP, API gates, protocol golden tests from the spec transcripts, client against the fake TMS with each fault forced |
+| `npm run sim:calls` | 22 scripted call scenarios (standard, edge, adversarial) through the API and the TCP adapter, with 20% injected faults. Writes `reports/*.md` |
+| `npm run sim:calls -- --real` | Same scenarios against the real TMS (books real loads for your token) |
+| `npm run tms:probe` | Read-only probe of the real TMS: echo conformance, MAX_BUY flag, EQTYPE values, date filter, fault profile, retry success rate |
+| `npm run fmcsa:check -- <MC>` | Live FMCSA lookup with your webKey |
+| `npm run smoke` | Health, auth and gates on a running deployment (`API_URL`) |
+
+Mock FMCSA MC numbers: `123456` and `234567` eligible, `345678` no active authority, `456789` not allowed to operate, `999999` outage.
 
 ## Status
 
 - [x] API, auth, FMCSA client (live + mock), OTP, negotiation, call record, Docker
-- [ ] Legacy TMS TCP adapter (waiting for protocol spec)
+- [x] Legacy TMS TCP adapter, fake TMS, scenario runner
 - [ ] HappyRobot workflow, voice agent prompt, Twin and Apps dashboard
-- [ ] Cloud deploy, QA suite with adversarial calls
+- [ ] Cloud deploy, voice-level adversarial QA

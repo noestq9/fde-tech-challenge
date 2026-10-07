@@ -42,17 +42,19 @@ describe('API', () => {
 
     expect((await call('/v1/calls/c1/otp/verify', { code: codes[0] })).json).toMatchObject({ verified: true });
 
-    const search = await call('/v1/calls/c1/loads/search', { origin: 'Chicago', equipment_type: 'dry_van' });
-    expect(search.json.loads[0].loadId).toBe('HR10001');
+    const search = await call('/v1/calls/c1/loads/search', { origin: 'Chicago, IL', equipment_type: 'dry van' });
+    // LD0000047001: listed 2600, MAX_BUY 2340 -> opening min(2600, 2340*0.9) = 2105
+    expect(search.json.loads[0]).toMatchObject({ load_id: 'LD0000047001', offer_rate: 2105, origin: 'Chicago, IL' });
 
-    expect((await call('/v1/calls/c1/negotiate', { load_id: 'HR10001', action: 'counter', amount: 2600 })).json).toMatchObject({ decision: 'counter', rate: 2220 });
-    expect((await call('/v1/calls/c1/negotiate', { load_id: 'HR10001', action: 'counter', amount: 2300 })).json).toMatchObject({ decision: 'accept', rate: 2300 });
+    expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'counter', amount: 2600 })).json).toMatchObject({ decision: 'counter', rate: 2185 });
+    expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'counter', amount: 2250 })).json).toMatchObject({ decision: 'accept', rate: 2250 });
 
-    const book = await call('/v1/calls/c1/book', { load_id: 'HR10001' });
-    expect(book.json).toMatchObject({ booked: true, rate: 2300 });
+    const book = await call('/v1/calls/c1/book', { load_id: 'LD0000047001' });
+    expect(book.json).toMatchObject({ booked: true, rate: 2250 });
+    expect(book.json.booking_ref).toMatch(/^BR\d{14}$/);
 
     const fin = await call('/v1/calls/c1/finalize', { sentiment: 'positive' });
-    expect(fin.json.record).toMatchObject({ outcome: 'booked', mc_number: '123456', agreed_rate: 2300, negotiation_rounds: 2, otp_verified: true });
+    expect(fin.json.record).toMatchObject({ outcome: 'booked', mc_number: '123456', agreed_rate: 2250, loadboard_rate: 2600, opening_offer: 2105, negotiation_rounds: 2, otp_verified: true, booking_status: 'BOOKED' });
   });
 
   it('blocks load search until the OTP is verified', async () => {
@@ -85,14 +87,14 @@ describe('API', () => {
 
   it('refuses to negotiate a load that was not offered', async () => {
     await verified('c7');
-    const r = await call('/v1/calls/c7/negotiate', { load_id: 'HR10003', action: 'accept' });
+    const r = await call('/v1/calls/c7/negotiate', { load_id: 'LD0000047003', action: 'accept' });
     expect(r.json).toMatchObject({ ok: false, error: 'load_not_offered' });
   });
 
   it('refuses to book without an agreed rate', async () => {
     await verified('c8');
     await call('/v1/calls/c8/loads/search', { origin: 'Chicago' });
-    expect((await call('/v1/calls/c8/book', { load_id: 'HR10001' })).json).toMatchObject({ ok: false, error: 'no_agreed_rate' });
+    expect((await call('/v1/calls/c8/book', { load_id: 'LD0000047001' })).json).toMatchObject({ ok: false, error: 'no_agreed_rate' });
   });
 
   it('maps a TMS timeout to a safe response', async () => {
@@ -105,15 +107,29 @@ describe('API', () => {
   it('logs failed_negotiation after three counters', async () => {
     await verified('c10');
     await call('/v1/calls/c10/loads/search', { origin: 'Chicago', equipment_type: 'dry_van' });
-    for (const amount of [3000, 2900, 2800, 2700]) await call('/v1/calls/c10/negotiate', { load_id: 'HR10001', action: 'counter', amount });
+    for (const amount of [3000, 2900, 2800, 2700]) await call('/v1/calls/c10/negotiate', { load_id: 'LD0000047001', action: 'counter', amount });
     expect((await call('/v1/calls/c10/finalize')).json.record.outcome).toBe('failed_negotiation');
   });
 
   it('validates input', async () => {
-    expect((await call('/v1/calls/c11/negotiate', { load_id: 'HR10001', action: 'counter' })).status).toBe(400);
+    expect((await call('/v1/calls/c11/negotiate', { load_id: 'LD0000047001', action: 'counter' })).status).toBe(400);
+  });
+
+  it('asks for filters when the carrier gave none', async () => {
+    await verified('c12');
+    expect((await call('/v1/calls/c12/loads/search', {})).json).toMatchObject({ ok: false, error: 'missing_filters' });
+  });
+
+  it('never pitches a load above its ceiling, and the opening never leaks the listed rate', async () => {
+    await verified('c13');
+    const r = await call('/v1/calls/c13/loads/search', { origin: 'Miami' });
+    for (const l of r.json.loads) {
+      expect(l).not.toHaveProperty('loadboard_rate');
+      expect(l.offer_rate).toBeLessThan(3080 + 1);
+    }
   });
 
   it('never returns max_rate in any response', () => {
-    for (const b of bodies) expect(b).not.toMatch(/max_?rate/i);
+    for (const b of bodies) expect(b).not.toMatch(/max_?rate|max_?buy|ceiling"/i);
   });
 });

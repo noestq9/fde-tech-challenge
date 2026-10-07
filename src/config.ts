@@ -22,8 +22,14 @@ const schema = z.object({
   TMS_HOST: z.string().optional(),
   TMS_PORT: z.coerce.number().int().optional(),
   TMS_TOKEN: z.string().optional(),
+  TMS_CONNECT_TIMEOUT_MS: z.coerce.number().int().default(2000),
+  // Per attempt. The real server's timeout fault stays silent for 30 s, so we give up much sooner.
   TMS_TIMEOUT_MS: z.coerce.number().int().default(3000),
-  TMS_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  TMS_RETRIES: z.coerce.number().int().min(0).max(5).default(3),
+  // Total budget per operation including retries: the carrier is waiting on the line.
+  TMS_BUDGET_MS: z.coerce.number().int().default(8000),
+  TMS_MAX_RESULTS: z.coerce.number().int().min(1).max(50).default(10),
+  TMS_BOOKING_JOURNAL: z.string().optional(),
 
   // OTP
   OTP_TTL_SECONDS: z.coerce.number().int().default(300),
@@ -40,6 +46,12 @@ const schema = z.object({
     .default('0.35,0.70,1.0')
     .transform((s) => s.split(',').map((v) => ratio.parse(v.trim()))),
   RATE_ROUNDING: z.coerce.number().int().positive().default(5),
+  // Opening offer = min(listed rate, ceiling x OPENING_RATIO).
+  OPENING_RATIO: ratio.default(0.9),
+  // Ceiling when the TMS does not expose MAX_BUY, as a share of the listed rate.
+  FALLBACK_CEILING_RATIO: z.coerce.number().min(0.5).max(1.5).default(1.0),
+  // How many loads to pitch per search (each one costs a LOAD_GET).
+  LOADS_TO_PITCH: z.coerce.number().int().min(1).max(5).default(3),
 
   SESSION_TTL_SECONDS: z.coerce.number().int().default(3600),
 });
@@ -47,7 +59,9 @@ const schema = z.object({
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const cfg = schema.parse(env);
+  // Treat empty values (e.g. `TMS_HOST=` in .env) as unset.
+  const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v !== ''));
+  const cfg = schema.parse(cleaned);
   if (cfg.FMCSA_MODE === 'live' && !cfg.FMCSA_WEB_KEY) throw new Error('FMCSA_WEB_KEY is required when FMCSA_MODE=live');
   if (cfg.TMS_MODE === 'live' && !(cfg.TMS_HOST && cfg.TMS_PORT && cfg.TMS_TOKEN)) {
     throw new Error('TMS_HOST, TMS_PORT and TMS_TOKEN are required when TMS_MODE=live');

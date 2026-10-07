@@ -1,7 +1,29 @@
+# One command: `docker compose up --build`
+# Starts the API plus a fake legacy TMS (same wire protocol, injects silent faults).
+# To use the real TMS instead, set TMS_HOST / TMS_PORT / TMS_TOKEN in .env and run only the api service:
+#   docker compose up --build api
 services:
   api:
     build: .
     env_file: .env
+    environment:
+      TMS_MODE: ${TMS_MODE:-live}
+      TMS_HOST: ${TMS_HOST:-fake-tms}
+      TMS_PORT: ${TMS_PORT:-9100}
+      TMS_TOKEN: ${TMS_TOKEN:-dev-token}
     ports:
       - "${PORT:-8080}:8080"
+    depends_on:
+      - fake-tms
     restart: unless-stopped
+
+  fake-tms:
+    build: .
+    command: ["node", "dist/fakeTms/main.js"]
+    environment:
+      FAKE_TMS_PORT: 9100
+      FAKE_TMS_TOKEN: dev-token
+      FAKE_TMS_FAULT_RATE: ${FAKE_TMS_FAULT_RATE:-0.2}
+      FAKE_TMS_EXPOSE_MAX_BUY: "true"
+    healthcheck:
+      disable: true

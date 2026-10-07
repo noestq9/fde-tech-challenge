@@ -1,5 +1,5 @@
 import type { CarrierProfile } from '../integrations/fmcsa.js';
-import type { NegotiationState } from './negotiation.js';
+import type { NegotiationState, Pricing } from './negotiation.js';
 
 // Per-call working state. It is short-lived (minutes) and lives in memory with a TTL.
 // The durable record is the call summary, which the workflow writes to Twin at the end of the call.
@@ -26,8 +26,10 @@ export interface CallSession {
   otpVerified: boolean;
   search?: { origin?: string; destination?: string; equipmentType?: string; resultCount: number };
   loadsOffered: string[];
+  /** Pricing per pitched load, computed server-side from LOAD_GET. Contains the ceiling: never returned to the agent. */
+  pricing: Record<string, Pricing>;
   negotiations: Record<string, NegotiationState>;
-  booking?: { loadId: string; rate: number; confirmation: string; handoffId: string };
+  booking?: { loadId: string; rate: number; bookingRef: string | null; bookingStatus: 'BOOKED' | 'BOOKED_UNCONFIRMED' | 'UNKNOWN'; handoffId: string };
   outcome?: Outcome;
   failureReason?: string;
   integrationErrors: Array<{ system: 'fmcsa' | 'tms' | 'otp'; error: string; at: string }>;
@@ -47,7 +49,7 @@ export class CallSessionStore {
       return hit.s;
     }
     const ts = new Date(this.now()).toISOString();
-    const s: CallSession = { callId, startedAt: ts, updatedAt: ts, otpVerified: false, loadsOffered: [], negotiations: {}, integrationErrors: [], events: [] };
+    const s: CallSession = { callId, startedAt: ts, updatedAt: ts, otpVerified: false, loadsOffered: [], pricing: {}, negotiations: {}, integrationErrors: [], events: [] };
     this.sessions.set(callId, { s, expiresAt: this.now() + this.ttlSeconds * 1000 });
     return s;
   }
@@ -68,7 +70,7 @@ export function summarize(s: CallSession) {
   const loadId = s.booking?.loadId ?? Object.keys(s.negotiations).at(-1);
   const n = loadId ? s.negotiations[loadId] : undefined;
   const carrierAsks = n?.history.filter((h) => h.carrierAsk != null).map((h) => h.carrierAsk!) ?? [];
-  const ourOffers = n?.history.filter((h) => h.ourOffer != null).map((h) => h.ourOffer!) ?? [];
+  const ourOffers = n?.history.filter((h) => h.event === 'initial_offer' || h.event === 'counter').map((h) => h.ourOffer!) ?? [];
   const ended = new Date(s.updatedAt).getTime();
   return {
     call_id: s.callId,
@@ -86,17 +88,18 @@ export function summarize(s: CallSession) {
     equipment_type: s.search?.equipmentType ?? null,
     loads_found: s.search?.resultCount ?? null,
     load_id: loadId ?? null,
-    loadboard_rate: n?.loadboardRate ?? null,
+    loadboard_rate: n?.listedRate ?? (loadId ? s.pricing[loadId]?.listedRate : undefined) ?? null,
+    opening_offer: n?.opening ?? (loadId ? s.pricing[loadId]?.opening : undefined) ?? null,
     carrier_offers: carrierAsks,
     our_offers: ourOffers,
     negotiation_rounds: n?.carrierCounters ?? 0,
     agreed_rate: s.booking?.rate ?? n?.agreedRate ?? null,
-    // Margin signal without exposing the ceiling: how much of the listed rate we had to add.
-    uplift_vs_loadboard_pct: n && (s.booking?.rate ?? n.agreedRate) ? round2((((s.booking?.rate ?? n.agreedRate)! - n.loadboardRate) / n.loadboardRate) * 100) : null,
+    agreed_vs_loadboard_pct: n && (s.booking?.rate ?? n.agreedRate) ? round2((((s.booking?.rate ?? n.agreedRate)! - n.listedRate) / n.listedRate) * 100) : null,
     outcome: s.outcome ?? 'abandoned',
     failure_reason: s.failureReason ?? null,
     integration_errors: s.integrationErrors.length,
-    tms_confirmation: s.booking?.confirmation ?? null,
+    booking_ref: s.booking?.bookingRef ?? null,
+    booking_status: s.booking?.bookingStatus ?? null,
     handoff_id: s.booking?.handoffId ?? null,
   };
 }

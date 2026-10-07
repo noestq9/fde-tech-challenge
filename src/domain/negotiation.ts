@@ -1,19 +1,44 @@
-// Deterministic negotiation policy. The LLM never sees max_rate and never decides a price:
+// Deterministic pricing and negotiation. The LLM never sees the ceiling and never decides a price:
 // it relays the carrier's number here and reads back the decision.
 
 export const MAX_CARRIER_COUNTERS = 3;
 
 export interface NegotiationPolicy {
-  /** Share of the (ceiling - listed) gap conceded on counter rounds 1..3. */
+  /** Share of the (ceiling - opening) gap conceded on counter rounds 1..3. */
   steps: number[];
   /** Offers are rounded down to this many dollars. */
   rounding: number;
+  /** Opening offer is at most this share of the ceiling (keeps room to negotiate when the ceiling is below the listed rate). */
+  openingRatio: number;
+  /** Ceiling as a share of the listed rate when the TMS does not expose MAX_BUY for this token. */
+  fallbackCeilingRatio: number;
+}
+
+export interface Pricing {
+  listedRate: number;
+  ceiling: number;
+  opening: number;
+  ceilingSource: 'max_buy' | 'fallback';
+}
+
+/**
+ * Opening offer = min(listed rate, ceiling × openingRatio).
+ * - Ceiling above the listed rate (classic brokerage case): we open at the listed rate and can move up.
+ * - Ceiling below the listed rate (what the TMS returns, e.g. RATE 2150 / MAX_BUY 1950): we open below the
+ *   ceiling, because offering the listed rate would already break it.
+ */
+export function priceLoad(listedRate: number, maxBuy: number | null, policy: NegotiationPolicy): Pricing {
+  const ceilingSource = maxBuy != null && maxBuy > 0 ? 'max_buy' : 'fallback';
+  const ceiling = ceilingSource === 'max_buy' ? maxBuy! : Math.floor(listedRate * policy.fallbackCeilingRatio);
+  const opening = roundDown(Math.min(listedRate, ceiling * policy.openingRatio), policy.rounding);
+  return { listedRate, ceiling, opening: Math.min(opening, ceiling), ceilingSource };
 }
 
 export interface NegotiationState {
-  loadboardRate: number;
-  maxRate: number;
-  /** Last price we put on the table (starts at loadboard_rate). */
+  listedRate: number;
+  ceiling: number;
+  opening: number;
+  /** Last price we put on the table (starts at the opening offer). */
   currentOffer: number;
   /** Number of carrier counter-offers processed so far. */
   carrierCounters: number;
@@ -30,27 +55,25 @@ export type Decision =
   | { decision: 'reject'; round: number; reason: 'max_rounds' | 'carrier_declined' }
   | { decision: 'closed'; reason: string };
 
-export function startNegotiation(loadboardRate: number, maxRate: number): NegotiationState {
-  // A ceiling below the listed rate is a data error; never pay above the listed rate in that case.
-  const ceiling = Math.max(maxRate, 0) < loadboardRate ? loadboardRate : maxRate;
+export function startNegotiation(p: Pricing): NegotiationState {
   return {
-    loadboardRate,
-    maxRate: ceiling,
-    currentOffer: loadboardRate,
+    listedRate: p.listedRate,
+    ceiling: p.ceiling,
+    opening: p.opening,
+    currentOffer: p.opening,
     carrierCounters: 0,
     status: 'open',
-    history: [{ round: 0, ourOffer: loadboardRate, event: 'initial_offer' }],
+    history: [{ round: 0, ourOffer: p.opening, event: 'initial_offer' }],
   };
 }
 
 export function offerForRound(state: NegotiationState, round: number, policy: NegotiationPolicy): number {
   const share = policy.steps[Math.min(round, policy.steps.length) - 1] ?? 0;
-  const raw = state.loadboardRate + (state.maxRate - state.loadboardRate) * share;
-  const rounded = Math.floor(raw / policy.rounding) * policy.rounding;
-  return clamp(rounded, state.loadboardRate, state.maxRate);
+  const raw = state.opening + (state.ceiling - state.opening) * share;
+  return clamp(roundDown(raw, policy.rounding), state.opening, state.ceiling);
 }
 
-/** Applies one carrier move and returns the new state plus what the agent should say. Pure function. */
+/** Applies one carrier move and returns the new state plus the decision. Pure function. */
 export function applyMove(
   state: NegotiationState,
   move: CarrierMove,
@@ -96,6 +119,10 @@ export function applyMove(
   s.history.push({ round, carrierAsk: ask, ourOffer: ourNext, event: 'counter' });
   const roundsLeft = MAX_CARRIER_COUNTERS - round;
   return { state: s, decision: { decision: 'counter', rate: ourNext, round, roundsLeft, final: roundsLeft === 0 } };
+}
+
+function roundDown(n: number, step: number) {
+  return Math.floor(n / step) * step;
 }
 
 function clamp(n: number, lo: number, hi: number) {

@@ -1,54 +1,66 @@
 // Contract between the API and the TMS. The live TCP adapter and the in-memory mock both implement it,
 // so the rest of the code never knows which one it talks to.
 
-export type EquipmentType = 'dry_van' | 'reefer' | 'flatbed';
-
-export interface Load {
+export interface LoadSummary {
   loadId: string;
-  origin: string;
+  origin: string; // "Atlanta, GA"
+  originZip: string;
   destination: string;
-  pickupDatetime: string;
-  deliveryDatetime: string;
-  equipmentType: EquipmentType | string;
+  destinationZip: string;
+  pickupDatetime: string; // naive ISO (TMS timezone is undocumented)
+  equipmentType: string; // DRY_VAN | REEFER | FLATBED | ...
   loadboardRate: number;
-  /** Broker ceiling. Stays inside the backend: never serialized to the agent. */
-  maxRate: number;
+  miles: number;
+  status: string; // OPEN | BOOKED | ...
+}
+
+export interface Load extends LoadSummary {
+  deliveryDatetime: string;
   weight: number;
   commodityType: string;
   numOfPieces: number;
-  miles: number;
   dimensions: string;
-  notes: string;
+  notes: string | null;
+  /** Broker ceiling (TMS field MAX_BUY). Absent for tokens without the flag. Never leaves the backend. */
+  maxRate: number | null;
 }
 
 export interface LoadSearchQuery {
-  origin?: string;
-  destination?: string;
+  originCity?: string;
+  originState?: string;
+  destinationCity?: string;
+  destinationState?: string;
   equipmentType?: string;
-  pickupDate?: string;
+  maxResults?: number;
 }
 
 export interface BookingResult {
   loadId: string;
-  confirmation: string;
+  /** BOOKED_UNCONFIRMED: first attempt was lost in transit and the retry said ALREADY_BOOKED, i.e. we booked it. */
+  status: 'BOOKED' | 'BOOKED_UNCONFIRMED';
+  bookingRef: string | null;
 }
 
 export interface TmsClient {
-  searchLoads(q: LoadSearchQuery): Promise<Load[]>;
+  searchLoads(q: LoadSearchQuery): Promise<LoadSummary[]>;
   getLoad(loadId: string): Promise<Load | null>;
   bookLoad(loadId: string, mcNumber: string, rate: number): Promise<BookingResult>;
 }
 
-/** Normalized TMS failures so routes can map them to clear outcomes. */
+export type TmsErrorKind =
+  | 'timeout' // no answer in the time budget
+  | 'malformed' // partial or invalid responses on every attempt
+  | 'unavailable' // connection errors, server errors, open circuit
+  | 'auth' // token rejected: alert ops, never retry
+  | 'not_found'
+  | 'not_available' // already booked by someone else
+  | 'rate_rejected'
+  | 'booking_unknown' // booking may or may not have gone through: a human must check
+  | 'client_bug'; // MALFORMED / MISSING_FIELD / UNKNOWN_CMD: our request was wrong
+
 export class TmsError extends Error {
-  constructor(public readonly kind: 'timeout' | 'malformed' | 'unavailable' | 'rejected' | 'not_found', message: string) {
+  constructor(public readonly kind: TmsErrorKind, message: string, public readonly code?: string) {
     super(message);
     this.name = 'TmsError';
   }
-}
-
-/** The only load shape the agent ever receives. */
-export function toPublicLoad(l: Load) {
-  const { maxRate: _hidden, ...rest } = l;
-  return rest;
 }
