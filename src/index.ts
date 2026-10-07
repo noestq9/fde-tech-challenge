@@ -1,6 +1,13 @@
 import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
 
+// Outside Docker (npm run dev / npm start), read .env if present. Real env vars still win.
+try {
+  process.loadEnvFile('.env');
+} catch {
+  // no .env file: rely on the environment
+}
+
 const cfg = loadConfig();
 const app = buildServer(cfg);
 

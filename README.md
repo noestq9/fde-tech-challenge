@@ -52,7 +52,7 @@ npm run smoke                 # checks the running API
 
 With TMS_HOST/TMS_PORT/TMS_TOKEN set in `.env`, `docker compose up --build api` runs against the real TMS.
 
-Local development: `npm install`, `npm run tms:fake` in one terminal, `npm run dev` in another.
+Without Docker: `npm install`, set `TMS_HOST=127.0.0.1`, `TMS_PORT=9100`, `TMS_TOKEN=dev-token` in `.env`, then `npm run tms:fake` in one terminal and `npm run dev` in another (the server reads `.env`).
 
 ## Testing
 

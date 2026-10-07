@@ -4,12 +4,27 @@ Estos son los endpoints que el agente de HappyRobot llamará como tools, en el o
 
 ## 0. Preparación
 
+Con Docker:
 ```bash
 git pull
-docker compose up --build        # API en :8080 + TMS falso (o `npm run tms:fake` y `npm run dev` sin Docker)
+docker compose up --build        # API en :8080 + TMS falso
 ```
 
-En otra terminal:
+Sin Docker (solo Node 20 o superior):
+```bash
+git pull && npm install
+# en .env, para usar el TMS falso local:
+#   TMS_HOST=127.0.0.1
+#   TMS_PORT=9100
+#   TMS_TOKEN=dev-token
+# (o los valores del TMS real, y te saltas la terminal 1)
+
+npm run tms:fake     # terminal 1: TMS falso en :9100
+npm run dev          # terminal 2: API en :8080, lee .env y se recarga al guardar
+```
+Sin Docker, el código OTP aparece directamente en la terminal 2 (`[DEV OTP] code=...`).
+
+En otra terminal (en Windows usa Git Bash o WSL; los `export` no funcionan en PowerShell):
 
 ```bash
 export BASE=http://localhost:8080
