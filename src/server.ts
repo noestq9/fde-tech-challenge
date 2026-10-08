@@ -218,17 +218,34 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
       return { ok: false, error: 'missing_filters', agent_guidance: 'Ask where they are, where they want to go, or their equipment type.' };
     }
     try {
-      const summaries = await tms.searchLoads({
-        originCity: orig.city, originState: orig.state, destinationCity: dest.city, destinationState: dest.state, equipmentType: equipment,
-        maxResults: cfg.TMS_MAX_RESULTS,
-      });
-      const open = summaries.filter((l) => l.status === 'OPEN');
+      const query = (withDest: boolean) =>
+        tms
+          .searchLoads({
+            originCity: orig.city, originState: orig.state, equipmentType: equipment, maxResults: cfg.TMS_MAX_RESULTS,
+            ...(withDest ? { destinationCity: dest.city, destinationState: dest.state } : {}),
+          })
+          .then((rows) => rows.filter((l) => l.status === 'OPEN'));
+      const hasDest = Boolean(dest.city || dest.state);
+      const hasOther = Boolean(orig.city || orig.state || equipment);
+      let open = await query(true);
+      // Nothing to that destination: show what leaves from their origin instead of ending the conversation.
+      let destinationRelaxed = false;
+      if (!open.length && hasDest && hasOther) {
+        open = await query(false);
+        destinationRelaxed = open.length > 0;
+      }
       s.search = { origin: body.origin, destination: body.destination, equipmentType: equipment, resultCount: open.length };
-      sessions.event(s, 'loads_searched', { count: open.length });
+      sessions.event(s, 'loads_searched', { count: open.length, destination_relaxed: destinationRelaxed });
       if (!open.length) {
         close(s, 'no_loads');
-        return { ok: true, loads: [], agent_guidance: 'No matching loads right now. Offer to note their lane and have a rep reach out.' };
+        return {
+          ok: true, loads: [],
+          agent_guidance: hasDest && !hasOther
+            ? 'Ask where they are now or what equipment they run, then search again.'
+            : 'Nothing matches right now. Ask if they would consider another origin or equipment; if not, offer to note their lane and have a rep reach out.',
+        };
       }
+      if (s.outcome === 'no_loads') { s.outcome = undefined; s.failureReason = undefined; }
 
       // Detail calls can fault independently; pitch whatever came back cleanly.
       const details = await Promise.allSettled(open.slice(0, cfg.LOADS_TO_PITCH).map((l) => tms.getLoad(l.loadId)));
@@ -242,7 +259,10 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
         if (!s.loadsOffered.includes(l.loadId)) s.loadsOffered.push(l.loadId);
         return toAgentLoad(l, s.pricing[l.loadId]!.opening);
       });
-      return { ok: true, loads, agent_guidance: 'Pitch the first load briefly: lane, pickup time, equipment, weight, and offer_rate. Ask if it works for them.' };
+      const pitch = 'Pitch the first load briefly: lane, pickup time, equipment, weight, and offer_rate. Ask if it works for them.';
+      return destinationRelaxed
+        ? { ok: true, loads, destination_relaxed: true, agent_guidance: `Nothing is going to ${body.destination} right now. Say so in one sentence, then offer these loads from their area instead. ${pitch}` }
+        : { ok: true, loads, agent_guidance: pitch };
     } catch (err) {
       return tmsFailure(s, err);
     }
@@ -353,13 +373,36 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
 
 const US_STATES = new Set('AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split(' '));
 
-/** "Atlanta, GA" → city + state; "GA" → state; "Atlanta" → city. */
+const STATE_NAMES: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO', connecticut: 'CT', delaware: 'DE',
+  florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY',
+  louisiana: 'LA', maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
+  missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM',
+  'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA',
+  'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
+  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY', 'district of columbia': 'DC',
+};
+// Callers who don't care where they go: treat as "no destination filter".
+const ANYWHERE = /^(any(where| place| city| state| destination)?|open|flexible|wherever|doesn'?t matter|no preference|not sure|n\/?a|everywhere)$/i;
+
+/**
+ * Spoken locations to TMS filters. "Atlanta, GA" / "Atlanta GA" / "Atlanta, Georgia" → city + state;
+ * "GA" / "Georgia" → state; "Atlanta" → city; "anywhere" → no filter.
+ */
 export function parseLocation(input?: string): { city?: string; state?: string } {
-  const v = (input ?? '').replace(/[|\r\n]/g, ' ').trim();
-  if (!v) return {};
+  const v = (input ?? '').replace(/[|\r\n]/g, ' ').replace(/\s+/g, ' ').replace(/[.,\s]*(usa|us|united states)\.?$/i, '').replace(/[.\s]+$/, '').trim();
+  if (!v || ANYWHERE.test(v)) return {};
+  const lower = v.toLowerCase();
+  if (STATE_NAMES[lower]) return { state: STATE_NAMES[lower] };
+  if (US_STATES.has(v.toUpperCase())) return { state: v.toUpperCase() };
+  for (const [name, code] of Object.entries(STATE_NAMES)) {
+    if (lower.endsWith(` ${name}`) || lower.endsWith(`,${name}`)) {
+      const city = v.slice(0, v.length - name.length).replace(/[,\s]+$/, '').trim();
+      return { city: city || undefined, state: code };
+    }
+  }
   const m = v.match(/^(.*?)[,\s]+([A-Za-z]{2})$/);
   if (m && US_STATES.has(m[2]!.toUpperCase())) return { city: m[1]!.trim() || undefined, state: m[2]!.toUpperCase() };
-  if (US_STATES.has(v.toUpperCase())) return { state: v.toUpperCase() };
   return { city: v };
 }
 

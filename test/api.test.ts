@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { buildServer } from '../src/server.js';
+import { buildServer, parseLocation } from '../src/server.js';
 import type { OtpDelivery } from '../src/domain/otp.js';
 
 const API_KEY = 'test-key-0123456789abcdefghij';
@@ -201,5 +201,48 @@ describe('Simulated OTP (OTP_DELIVERY=simulated)', () => {
     const env = { API_KEY, NODE_ENV: 'production', OTP_DELIVERY: 'simulated' };
     expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow(/ALLOW_OTP_DEMO/);
     expect(loadConfig({ ...env, ALLOW_OTP_DEMO: 'true' } as NodeJS.ProcessEnv).OTP_SIMULATED_CODE).toBe('1218');
+  });
+});
+
+describe('parseLocation', () => {
+  it.each([
+    ['Dallas, TX', { city: 'Dallas', state: 'TX' }],
+    ['Dallas TX', { city: 'Dallas', state: 'TX' }],
+    ['Dallas, Texas', { city: 'Dallas', state: 'TX' }],
+    ['Dallas Texas', { city: 'Dallas', state: 'TX' }],
+    ['Texas', { state: 'TX' }],
+    ['tx', { state: 'TX' }],
+    ['New York', { state: 'NY' }],
+    ['Kansas City, Missouri', { city: 'Kansas City', state: 'MO' }],
+    ['Atlanta, GA, USA', { city: 'Atlanta', state: 'GA' }],
+    ['Memphis', { city: 'Memphis' }],
+    ['anywhere', {}],
+    ["doesn't matter", {}],
+    ['open', {}],
+  ])('%s', (input, expected) => expect(parseLocation(input)).toEqual(expected));
+});
+
+describe('Destination with no loads', () => {
+  it('falls back to loads from the origin and says so', async () => {
+    await verified('dst1');
+    const r = await call('/v1/calls/dst1/loads/search', { origin: 'Houston, TX', destination: 'Boise, Idaho' });
+    expect(r.json).toMatchObject({ ok: true, destination_relaxed: true });
+    expect(r.json.loads.length).toBeGreaterThan(0);
+    expect(r.json.agent_guidance).toMatch(/Nothing is going to Boise, Idaho/);
+  });
+
+  it('asks for origin or equipment when only an unmatched destination was given', async () => {
+    await verified('dst2');
+    const r = await call('/v1/calls/dst2/loads/search', { destination: 'Boise, ID' });
+    expect(r.json).toMatchObject({ ok: true, loads: [] });
+    expect(r.json.agent_guidance).toMatch(/Ask where they are now/);
+  });
+
+  it('a later successful search clears the no_loads outcome', async () => {
+    await verified('dst3');
+    await call('/v1/calls/dst3/loads/search', { origin: 'Boise, ID' });
+    expect((await call('/v1/calls/dst3/loads/search', { origin: 'Houston, TX' })).json.loads.length).toBeGreaterThan(0);
+    const rec = (await app.inject({ method: 'GET', url: '/v1/calls/dst3', headers: { 'x-api-key': API_KEY } })).json().record;
+    expect(rec.outcome).not.toBe('no_loads');
   });
 });
