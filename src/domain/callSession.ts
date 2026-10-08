@@ -15,7 +15,7 @@ export type Outcome =
   | 'abandoned';
 
 /** demo = OTP_DEMO_CONTACT override, for demos only. */
-export type OtpSource = 'demo' | 'directory' | 'fmcsa' | 'caller_provided';
+export type OtpSource = 'simulated' | 'demo' | 'directory' | 'fmcsa' | 'caller_provided';
 
 export interface CallSession {
   callId: string;

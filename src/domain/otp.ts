@@ -11,6 +11,8 @@ export interface OtpOptions {
   ttlSeconds: number;
   maxAttempts: number;
   maxSends: number;
+  /** Demo only: use this code instead of a random one (OTP_DELIVERY=simulated). */
+  fixedCode?: string;
   now?: () => number;
 }
 
@@ -42,7 +44,7 @@ export class OtpService {
     if (prev?.locked) return { sent: false, reason: 'locked' };
     if (prev && prev.sends >= this.opts.maxSends) return { sent: false, reason: 'resend_limit' };
 
-    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const code = this.opts.fixedCode ?? randomInt(0, 1_000_000).toString().padStart(6, '0');
     this.entries.set(callId, {
       hash: this.hash(callId, code),
       expiresAt: this.now() + this.opts.ttlSeconds * 1000,

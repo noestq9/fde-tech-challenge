@@ -74,6 +74,8 @@ Without Docker: `npm install`, set `TMS_HOST=127.0.0.1`, `TMS_PORT=9100`, `TMS_T
 | `npm run fmcsa:check -- <MC>` | Live FMCSA lookup with your webKey |
 | `npm run smoke` | Health, auth and gates on a running deployment (`API_URL`) |
 
+Demo without SMS or email: `OTP_DELIVERY=simulated` sends nothing and accepts only `OTP_SIMULATED_CODE` (default `1218`); attempts and lockout still apply. Needs `ALLOW_OTP_DEMO=true` when `NODE_ENV=production`.
+
 Mock FMCSA MC numbers: `123456` and `234567` eligible, `345678` no active authority, `456789` not allowed to operate, `999999` outage.
 
 ## Status

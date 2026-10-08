@@ -10,6 +10,14 @@ export class ConsoleOtpDelivery implements OtpDelivery {
   }
 }
 
+/** Demo only: delivers nothing. The caller already knows the fixed code (OTP_SIMULATED_CODE). */
+export class SimulatedOtpDelivery implements OtpDelivery {
+  constructor(private readonly log: FastifyBaseLogger) {}
+  async send(to: { channel: 'sms' | 'email'; address: string }, _code: string, ctx: { callId: string }) {
+    this.log.info({ callId: ctx.callId, channel: to.channel }, 'simulated OTP: nothing sent');
+  }
+}
+
 /**
  * Posts the code to a separate HappyRobot workflow (Webhook (API) trigger -> Send SMS / email node).
  * Keeps delivery on the platform while the code never passes through the voice agent's run.

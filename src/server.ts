@@ -7,7 +7,7 @@ import { StaticCarrierDirectory, type CarrierDirectory } from './domain/carrierD
 import { applyMove, priceLoad, startNegotiation, type NegotiationPolicy } from './domain/negotiation.js';
 import { OtpService, maskAddress, type OtpDelivery } from './domain/otp.js';
 import { LiveFmcsaClient, MockFmcsaClient, normalizeMc, type FmcsaClient } from './integrations/fmcsa.js';
-import { ConsoleOtpDelivery, WebhookOtpDelivery } from './integrations/otpDelivery.js';
+import { ConsoleOtpDelivery, SimulatedOtpDelivery, WebhookOtpDelivery } from './integrations/otpDelivery.js';
 import { MockTms } from './integrations/tms/mockTms.js';
 import { LtmsClient } from './integrations/tms/ltmsClient.js';
 import { TmsError, type Load, type TmsClient } from './integrations/tms/types.js';
@@ -43,9 +43,16 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
       : new MockTms());
   const delivery =
     deps.otpDelivery ??
-    (cfg.OTP_DELIVERY === 'webhook' ? new WebhookOtpDelivery(cfg.OTP_WEBHOOK_URL!, cfg.OTP_WEBHOOK_SECRET!) : new ConsoleOtpDelivery(app.log));
+    (cfg.OTP_DELIVERY === 'webhook'
+      ? new WebhookOtpDelivery(cfg.OTP_WEBHOOK_URL!, cfg.OTP_WEBHOOK_SECRET!)
+      : cfg.OTP_DELIVERY === 'simulated'
+        ? new SimulatedOtpDelivery(app.log)
+        : new ConsoleOtpDelivery(app.log));
+  const simulatedOtp = cfg.OTP_DELIVERY === 'simulated';
   const directory = deps.directory ?? new StaticCarrierDirectory();
-  const otp = new OtpService(delivery, { ttlSeconds: cfg.OTP_TTL_SECONDS, maxAttempts: cfg.OTP_MAX_ATTEMPTS, maxSends: cfg.OTP_MAX_SENDS, now: deps.now });
+  const otp = new OtpService(delivery, { ttlSeconds: cfg.OTP_TTL_SECONDS, maxAttempts: cfg.OTP_MAX_ATTEMPTS, maxSends: cfg.OTP_MAX_SENDS,
+    fixedCode: simulatedOtp ? cfg.OTP_SIMULATED_CODE : undefined, now: deps.now,
+  });
   const sessions = new CallSessionStore(cfg.SESSION_TTL_SECONDS, deps.now);
   const policy: NegotiationPolicy = {
     steps: cfg.NEGOTIATION_STEPS, rounding: cfg.RATE_ROUNDING, openingRatio: cfg.OPENING_RATIO, fallbackCeilingRatio: cfg.FALLBACK_CEILING_RATIO,
@@ -68,7 +75,7 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     return reply.code(500).send({ ok: false, error: 'internal_error', agent_guidance: 'Apologize, say there is a system issue, and offer to have a rep call them back.' });
   });
 
-  app.get('/health', async () => ({ ok: true, fmcsa: cfg.FMCSA_MODE, tms: cfg.TMS_MODE }));
+  app.get('/health', async () => ({ ok: true, fmcsa: cfg.FMCSA_MODE, tms: cfg.TMS_MODE, otp: cfg.OTP_DELIVERY }));
 
   const callParams = z.object({ callId: z.string().min(1).max(128) });
   const close = (s: ReturnType<typeof sessions.get>, outcome: Outcome, reason?: string) => {
@@ -134,7 +141,9 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     // then (new carriers only) what the caller gives.
     let dest: { channel: 'sms' | 'email'; address: string; source: OtpSource } | null = null;
     const onFile = await directory.contactFor(s.mcNumber);
-    if (cfg.OTP_DEMO_CONTACT) dest = { channel: cfg.OTP_DEMO_CONTACT.includes('@') ? 'email' : 'sms', address: cfg.OTP_DEMO_CONTACT, source: 'demo' };
+    // Simulated OTP: nothing is sent, so no real contact is needed.
+    if (simulatedOtp) dest = { channel: 'sms', address: 'simulated', source: 'simulated' };
+    else if (cfg.OTP_DEMO_CONTACT) dest = { channel: cfg.OTP_DEMO_CONTACT.includes('@') ? 'email' : 'sms', address: cfg.OTP_DEMO_CONTACT, source: 'demo' };
     else if (onFile) dest = { ...onFile, source: 'directory' };
     else if (s.carrier?.phone) dest = { channel: 'sms', address: s.carrier.phone, source: 'fmcsa' };
     else if (body.caller_contact) {
@@ -145,7 +154,7 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
       return { ok: false, error: 'no_contact_on_file', agent_guidance: 'Ask for a mobile number or email to send the verification code to.' };
     }
 
-    const masked = maskAddress(dest.channel, dest.address);
+    const masked = simulatedOtp ? 'the phone number on file' : maskAddress(dest.channel, dest.address);
     try {
       const r = await otp.send(callId, s.mcNumber, dest);
       if (!r.sent) {
@@ -154,7 +163,7 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
       }
       s.otp = { channel: dest.channel, masked, source: dest.source };
       sessions.event(s, 'otp_sent', { channel: dest.channel, source: dest.source });
-      return { ok: true, sent: true, channel: dest.channel, sent_to: masked, expires_in_seconds: r.expiresInSeconds, agent_guidance: `Tell them a 6-digit code was sent to ${masked} and ask them to read it back.` };
+      return { ok: true, sent: true, channel: dest.channel, sent_to: masked, expires_in_seconds: r.expiresInSeconds, agent_guidance: `Tell them a verification code was sent to ${masked} and ask them to read it back.` };
     } catch (err) {
       s.integrationErrors.push({ system: 'otp', error: String(err), at: new Date().toISOString() });
       return { ok: false, error: 'otp_delivery_failed', agent_guidance: 'The code could not be sent. Apologize, offer to try once more, otherwise offer a rep callback.' };

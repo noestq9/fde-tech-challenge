@@ -162,3 +162,37 @@ describe('OTP demo contact', () => {
     expect(() => loadConfig({ API_KEY, NODE_ENV: 'production', OTP_DEMO_CONTACT: '+15550001234' } as NodeJS.ProcessEnv)).toThrow(/OTP_DEMO_CONTACT/);
   });
 });
+
+describe('Simulated OTP (OTP_DELIVERY=simulated)', () => {
+  const h = { 'x-api-key': API_KEY };
+  const sim = () =>
+    buildServer(loadConfig({ API_KEY, LOG_LEVEL: 'silent', OTP_DELIVERY: 'simulated' } as NodeJS.ProcessEnv), {
+      fmcsa: { verifyMc: async (mc) => ({ status: 'eligible', carrier: { mcNumber: mc, legalName: 'No Phone LLC' } }) },
+    });
+  const post = (a: ReturnType<typeof sim>, url: string, payload: object = {}) => a.inject({ method: 'POST', url, payload, headers: h }).then((r) => r.json());
+
+  it('accepts 1218 without any contact on file and unlocks the load search', async () => {
+    const a = sim();
+    await post(a, '/v1/calls/s1/verify-carrier', { mc_number: '777777' });
+    expect(await post(a, '/v1/calls/s1/otp/send')).toMatchObject({ ok: true, sent: true, sent_to: 'the phone number on file' });
+    expect(await post(a, '/v1/calls/s1/otp/verify', { code: '1218' })).toMatchObject({ verified: true });
+    expect((await post(a, '/v1/calls/s1/finalize')).record.otp_source).toBe('simulated');
+  });
+
+  it('rejects any other code and locks after 3 misses, even with 1218 afterwards', async () => {
+    const a = sim();
+    await post(a, '/v1/calls/s2/verify-carrier', { mc_number: '777777' });
+    await post(a, '/v1/calls/s2/otp/send');
+    expect(await post(a, '/v1/calls/s2/otp/verify', { code: '1234' })).toMatchObject({ verified: false, reason: 'mismatch', attempts_left: 2 });
+    await post(a, '/v1/calls/s2/otp/verify', { code: '0000' });
+    expect(await post(a, '/v1/calls/s2/otp/verify', { code: '9999' })).toMatchObject({ verified: false, locked: true });
+    expect(await post(a, '/v1/calls/s2/otp/verify', { code: '1218' })).toMatchObject({ verified: false });
+    expect(await post(a, '/v1/calls/s2/loads/search', { origin: 'TX' })).toMatchObject({ ok: false, error: 'identity_not_verified' });
+  });
+
+  it('needs ALLOW_OTP_DEMO=true in production', () => {
+    const env = { API_KEY, NODE_ENV: 'production', OTP_DELIVERY: 'simulated' };
+    expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow(/ALLOW_OTP_DEMO/);
+    expect(loadConfig({ ...env, ALLOW_OTP_DEMO: 'true' } as NodeJS.ProcessEnv).OTP_SIMULATED_CODE).toBe('1218');
+  });
+});

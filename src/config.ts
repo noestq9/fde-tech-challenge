@@ -36,7 +36,9 @@ const schema = z.object({
   OTP_MAX_ATTEMPTS: z.coerce.number().int().default(3),
   OTP_MAX_SENDS: z.coerce.number().int().default(2),
   // "console" logs the code (dev only). "webhook" posts it to a HappyRobot workflow that sends SMS/email.
-  OTP_DELIVERY: z.enum(['console', 'webhook']).default('console'),
+  // "simulated" sends nothing and the code is always OTP_SIMULATED_CODE (demo environments without SMS/email).
+  OTP_DELIVERY: z.enum(['console', 'webhook', 'simulated']).default('console'),
+  OTP_SIMULATED_CODE: z.string().regex(/^\d{4,8}$/, 'OTP_SIMULATED_CODE must be 4 to 8 digits').default('1218'),
   OTP_WEBHOOK_URL: z.string().url().optional(),
   // HappyRobot API key (Settings -> API Keys) that the workflow's Webhook (API) trigger accepts.
   OTP_WEBHOOK_SECRET: z.string().optional(),
@@ -75,6 +77,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (cfg.OTP_DEMO_CONTACT && env.NODE_ENV === 'production' && env.ALLOW_OTP_DEMO !== 'true') {
     throw new Error('OTP_DEMO_CONTACT is set in production. Remove it, or set ALLOW_OTP_DEMO=true for a demo deployment.');
+  }
+  if (cfg.OTP_DELIVERY === 'simulated' && env.NODE_ENV === 'production' && env.ALLOW_OTP_DEMO !== 'true') {
+    throw new Error('OTP_DELIVERY=simulated accepts a fixed code. Set ALLOW_OTP_DEMO=true to use it in a demo deployment.');
   }
   if (cfg.NEGOTIATION_STEPS.length !== 3) throw new Error('NEGOTIATION_STEPS needs exactly 3 values (one per round)');
   return cfg;
