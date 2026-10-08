@@ -394,6 +394,12 @@ export function parseLocation(input?: string): { city?: string; state?: string }
   if (!v || ANYWHERE.test(v)) return {};
   const lower = v.toLowerCase();
   if (STATE_NAMES[lower]) return { state: STATE_NAMES[lower] };
+  // Regions inside one state ("Southern California", "upstate New York", "SoCal") → the whole state.
+  if (/^(so|nor)\s?cal$/.test(lower)) return { state: 'CA' };
+  const region = lower.match(/^(?:the\s+)?(?:southern|northern|eastern|western|central|south|north|east|west|upstate|downstate|coastal)\s+(.+)$/);
+  if (region && (STATE_NAMES[region[1]!] || US_STATES.has(region[1]!.toUpperCase()))) {
+    return { state: STATE_NAMES[region[1]!] ?? region[1]!.toUpperCase() };
+  }
   if (US_STATES.has(v.toUpperCase())) return { state: v.toUpperCase() };
   for (const [name, code] of Object.entries(STATE_NAMES)) {
     if (lower.endsWith(` ${name}`) || lower.endsWith(`,${name}`)) {

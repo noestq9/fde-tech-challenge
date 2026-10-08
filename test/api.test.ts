@@ -216,6 +216,11 @@ describe('parseLocation', () => {
     ['Kansas City, Missouri', { city: 'Kansas City', state: 'MO' }],
     ['Atlanta, GA, USA', { city: 'Atlanta', state: 'GA' }],
     ['Memphis', { city: 'Memphis' }],
+    ['Southern California', { state: 'CA' }],
+    ['SoCal', { state: 'CA' }],
+    ['upstate New York', { state: 'NY' }],
+    ['West Virginia', { state: 'WV' }],
+    ['South Carolina', { state: 'SC' }],
     ['anywhere', {}],
     ["doesn't matter", {}],
     ['open', {}],
@@ -223,6 +228,13 @@ describe('parseLocation', () => {
 });
 
 describe('Destination with no loads', () => {
+  it('searches a region as its state and falls back to the origin when nothing goes there', async () => {
+    await verified('dst0');
+    const r = await call('/v1/calls/dst0/loads/search', { origin: 'Houston, TX', destination: 'Southern California', equipment_type: 'dry van' });
+    expect(r.json).toMatchObject({ ok: true, destination_relaxed: true });
+    expect(r.json.loads.map((l: { load_id: string }) => l.load_id)).toContain('LD00925');
+  });
+
   it('falls back to loads from the origin and says so', async () => {
     await verified('dst1');
     const r = await call('/v1/calls/dst1/loads/search', { origin: 'Houston, TX', destination: 'Boise, Idaho' });
