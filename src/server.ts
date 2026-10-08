@@ -75,6 +75,17 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     return reply.code(500).send({ ok: false, error: 'internal_error', agent_guidance: 'Apologize, say there is a system issue, and offer to have a rep call them back.' });
   });
 
+  // Workflow tools template every parameter into the body, so an unused optional one can arrive as "" or "null".
+  // Treat those as absent instead of failing validation.
+  app.addHook('preValidation', async (req) => {
+    if (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) {
+      const b = req.body as Record<string, unknown>;
+      for (const [k, v] of Object.entries(b)) {
+        if (v === null || (typeof v === 'string' && ['', 'null', 'undefined', 'none'].includes(v.trim().toLowerCase()))) delete b[k];
+      }
+    }
+  });
+
   app.get('/health', async () => ({ ok: true, fmcsa: cfg.FMCSA_MODE, tms: cfg.TMS_MODE, otp: cfg.OTP_DELIVERY }));
 
   const callParams = z.object({ callId: z.string().min(1).max(128) });

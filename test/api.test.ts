@@ -138,6 +138,13 @@ describe('health', () => {
   it('is public with a trailing slash or query string', async () => {
     for (const url of ['/health', '/health/', '/health?probe=1']) expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
   });
+  it('treats empty or "null" optional params from workflow templates as absent', async () => {
+    await verified('e1');
+    const search = await call('/v1/calls/e1/loads/search', { origin: 'TX', destination: '', equipment_type: 'null' });
+    expect(search.json).toMatchObject({ ok: true });
+    const loadId = search.json.loads[0].load_id;
+    expect((await call('/v1/calls/e1/negotiate', { load_id: loadId, action: 'accept', amount: '' })).json).toMatchObject({ decision: 'accept' });
+  });
   it('still hides unknown routes behind auth', async () => {
     expect((await app.inject({ method: 'GET', url: '/healt' })).statusCode).toBe(401);
   });
