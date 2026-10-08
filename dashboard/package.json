@@ -1,0 +1,26 @@
+{
+  "name": "carrier-desk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ops dashboard for the inbound carrier sales agent. Reads call records from HappyRobot Twin.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.5.26",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/react": "19.1.2",
+    "@types/react-dom": "19.1.2",
+    "typescript": "5.8.3",
+    "vitest": "3.1.2"
+  }
+}

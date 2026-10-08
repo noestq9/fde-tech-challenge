@@ -11,7 +11,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "vitest run",
+    "test": "vitest run --dir test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tms:fake": "tsx src/fakeTms/main.ts",
     "tms:probe": "tsx src/scripts/tmsProbe.ts",
