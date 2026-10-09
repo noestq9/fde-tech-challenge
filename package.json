@@ -16,6 +16,7 @@
     "tms:fake": "tsx src/fakeTms/main.ts",
     "tms:probe": "tsx src/scripts/tmsProbe.ts",
     "tms:dump": "tsx src/scripts/tmsDump.ts",
+    "tms:inventory": "tsx src/scripts/tmsInventory.ts",
     "fmcsa:check": "tsx src/scripts/fmcsaCheck.ts",
     "sim:calls": "tsx src/scripts/simulateCalls.ts",
     "smoke": "tsx src/scripts/smoke.ts"
