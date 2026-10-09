@@ -94,12 +94,26 @@ export async function setOpsStatus(runId: string, status: OpsStatus): Promise<vo
   }
   if (mode === 'api') {
     // PATCH /twin/tables/{table}/rows { primaryKey, updates } (docs: "Update a row in a Twin table").
-    await request(`${apiBase}/twin/tables/${encodeURIComponent(table)}/rows`, {
-      method: 'PATCH',
-      body: JSON.stringify({ primaryKey: { run_id: runId }, updates: { ops_status: status } }),
-    });
+    try {
+      await request(`${apiBase}/twin/tables/${encodeURIComponent(table)}/rows`, {
+        method: 'PATCH',
+        body: JSON.stringify({ primaryKey: { run_id: runId }, updates: { ops_status: status } }),
+      });
+    } catch (err) {
+      // 409 = the table has no primary key, so Twin refuses row edits. Fall back to SQL (POST /twin/sql).
+      if (!String(err).includes('Twin returned 409')) throw err;
+      await request(`${apiBase}/twin/sql`, { method: 'POST', body: JSON.stringify({ sql: opsStatusSql(runId, status) }) });
+    }
     return;
   }
   // Gateway: update syntax not documented; assumed from its REST mirror of the schema.
   await request(`${gateway}/${table}?run_id=eq.${encodeURIComponent(runId)}`, { method: 'PATCH', body: JSON.stringify({ ops_status: status }) });
+}
+
+/** Built only from validated values: run ids are platform ids and status is one of two literals. */
+export function opsStatusSql(runId: string, status: OpsStatus): string {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(runId)) throw new Error('unexpected run id format');
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(table)) throw new Error('unexpected table name');
+  const value = status === null ? 'NULL' : `'${status === 'confirmed' ? 'confirmed' : 'followed_up'}'`;
+  return `UPDATE ${table} SET ops_status = ${value} WHERE run_id = '${runId}'`;
 }
