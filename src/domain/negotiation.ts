@@ -46,13 +46,16 @@ export interface NegotiationState {
   carrierCounters: number;
   status: 'open' | 'agreed' | 'failed';
   agreedRate?: number;
+  /** True once the carrier has said yes to agreedRate out loud. Booking requires it. */
+  confirmed?: boolean;
   history: Array<{ round: number; carrierAsk?: number; ourOffer?: number; event: string }>;
 }
 
 export type CarrierMove = { action: 'counter'; amount: number } | { action: 'accept' } | { action: 'decline' };
 
 export type Decision =
-  | { decision: 'accept'; rate: number; round: number }
+  | { decision: 'accept'; rate: number; round: number; needsConfirmation: boolean }
+  | { decision: 'confirm'; rate: number }
   | { decision: 'counter'; rate: number; round: number; roundsLeft: number; final: boolean }
   | { decision: 'reject'; round: number; reason: 'max_rounds' | 'carrier_declined' }
   | { decision: 'closed'; reason: string };
@@ -81,14 +84,31 @@ export function applyMove(
   move: CarrierMove,
   policy: NegotiationPolicy,
 ): { state: NegotiationState; decision: Decision } {
+  // We took the carrier's own number: the carrier still has to hear it and say yes before we book.
+  if (state.status === 'agreed' && !state.confirmed) {
+    const s: NegotiationState = { ...state, history: [...state.history] };
+    const rate = s.agreedRate!;
+    if (move.action === 'accept') {
+      s.confirmed = true;
+      s.history.push({ round: s.carrierCounters, ourOffer: rate, event: 'carrier_confirmed' });
+      return { state: s, decision: { decision: 'accept', rate, round: s.carrierCounters, needsConfirmation: false } };
+    }
+    if (move.action === 'decline') {
+      s.status = 'failed';
+      s.history.push({ round: s.carrierCounters, event: 'carrier_declined' });
+      return { state: s, decision: { decision: 'reject', round: s.carrierCounters, reason: 'carrier_declined' } };
+    }
+    return { state, decision: { decision: 'confirm', rate } };
+  }
   if (state.status !== 'open') return { state, decision: { decision: 'closed', reason: `negotiation already ${state.status}` } };
   const s: NegotiationState = { ...state, history: [...state.history] };
 
   if (move.action === 'accept') {
     s.status = 'agreed';
     s.agreedRate = s.currentOffer;
+    s.confirmed = true;
     s.history.push({ round: s.carrierCounters, ourOffer: s.currentOffer, event: 'carrier_accepted' });
-    return { state: s, decision: { decision: 'accept', rate: s.currentOffer, round: s.carrierCounters } };
+    return { state: s, decision: { decision: 'accept', rate: s.currentOffer, round: s.carrierCounters, needsConfirmation: false } };
   }
 
   if (move.action === 'decline') {
@@ -114,7 +134,7 @@ export function applyMove(
     s.status = 'agreed';
     s.agreedRate = rate;
     s.history.push({ round, carrierAsk: ask, event: 'accepted_carrier_ask' });
-    return { state: s, decision: { decision: 'accept', rate, round } };
+    return { state: s, decision: { decision: 'accept', rate, round, needsConfirmation: true } };
   }
 
   s.currentOffer = ourNext;

@@ -94,3 +94,23 @@ describe('negotiation policy', () => {
     expect(decisions[1]).toMatchObject({ decision: 'closed' });
   });
 });
+
+describe('confirmation before booking', () => {
+  const fresh = () => startNegotiation(priceLoad(1277, 1552, policy));
+
+  it('accepting our offer is already a confirmation', () => {
+    const { state, decision } = applyMove(fresh(), { action: 'accept' }, policy);
+    expect(decision).toMatchObject({ decision: 'accept', needsConfirmation: false });
+    expect(state.confirmed).toBe(true);
+  });
+
+  it('taking the carrier ask needs their yes; a no ends it', () => {
+    const a = applyMove(fresh(), { action: 'counter', amount: 1300 }, policy);
+    expect(a.decision).toMatchObject({ decision: 'accept', rate: 1300, needsConfirmation: true });
+    expect(a.state.confirmed).toBeFalsy();
+    const yes = applyMove(a.state, { action: 'accept' }, policy);
+    expect(yes.state).toMatchObject({ confirmed: true, agreedRate: 1300 });
+    const no = applyMove(a.state, { action: 'decline' }, policy);
+    expect(no.decision).toMatchObject({ decision: 'reject', reason: 'carrier_declined' });
+  });
+});

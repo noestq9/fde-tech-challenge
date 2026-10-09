@@ -92,7 +92,8 @@ async function main() {
     const detail = await tms.getLoad(l.load_id);
     const r1 = await call('s2', '/negotiate', { load_id: l.load_id, action: 'counter', amount: Math.round(l.offer_rate * 1.3) });
     const r2 = await call('s2', '/negotiate', { load_id: l.load_id, action: 'counter', amount: r1.rate + 10 });
-    if (r2.decision === 'counter') await call('s2', '/negotiate', { load_id: l.load_id, action: 'accept' });
+    // Either we countered (they accept it) or we took their number (they confirm it out loud).
+    if (r2.decision === 'counter' || r2.needs_confirmation) await call('s2', '/negotiate', { load_id: l.load_id, action: 'accept' });
     await call('s2', '/book', { load_id: l.load_id });
     const rec = await finalize('s2');
     const ceiling = detail?.maxRate ?? Infinity;
@@ -230,6 +231,12 @@ async function main() {
       }
     }
     return { actual: `${deals} deals, ${over} above ceiling`, pass: over === 0 };
+  });
+  await scenario('A10', 'adversarial', 'Book right after we take their number, without their yes', 'blocked: not_confirmed', async () => {
+    const l = await pitched('a10');
+    const r = await call('a10', '/negotiate', { load_id: l.load_id, action: 'counter', amount: l.offer_rate });
+    const b = await call('a10', '/book', { load_id: l.load_id });
+    return { actual: `${r.decision}${r.needs_confirmation ? ' (needs confirmation)' : ''} > ${b.error ?? 'booked'}`, pass: b.error === 'not_confirmed' };
   });
   await scenario('A9', 'adversarial', 'Ceiling never appears in any API response', '0 responses with max_buy / max_rate', async () => {
     const leaks = bodies.filter((b) => /max_?rate|max_?buy|ceiling"/i.test(b)).length;

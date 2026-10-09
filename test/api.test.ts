@@ -47,7 +47,11 @@ describe('API', () => {
     expect(search.json.loads[0]).toMatchObject({ load_id: 'LD0000047001', offer_rate: 2105, origin: 'Chicago, IL' });
 
     expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'counter', amount: 2600 })).json).toMatchObject({ decision: 'counter', rate: 2185 });
-    expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'counter', amount: 2250 })).json).toMatchObject({ decision: 'accept', rate: 2250 });
+    expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'counter', amount: 2250 })).json).toMatchObject({ decision: 'accept', rate: 2250, needs_confirmation: true });
+    // We took their number, but nothing is booked until the carrier says yes to it.
+    expect((await call('/v1/calls/c1/book', { load_id: 'LD0000047001' })).json).toMatchObject({ ok: false, error: 'not_confirmed' });
+    expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'counter', amount: 2400 })).json).toMatchObject({ decision: 'confirm', rate: 2250 });
+    expect((await call('/v1/calls/c1/negotiate', { load_id: 'LD0000047001', action: 'accept' })).json).toMatchObject({ decision: 'accept', rate: 2250 });
 
     const book = await call('/v1/calls/c1/book', { load_id: 'LD0000047001' });
     expect(book.json).toMatchObject({ booked: true, rate: 2250 });

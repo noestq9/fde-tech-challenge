@@ -300,7 +300,17 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
 
     switch (decision.decision) {
       case 'accept':
-        return { ok: true, decision: 'accept', rate: decision.rate, agent_guidance: `Agree at $${decision.rate}. Confirm the load and rate back to them, then book it.` };
+        return decision.needsConfirmation
+          ? {
+              ok: true, decision: 'accept', rate: decision.rate, needs_confirmation: true,
+              agent_guidance: `You can do $${decision.rate}. Read back the load, lane and $${decision.rate}, and ask if they want you to book it. Do not call book_load yet. If they say yes, call negotiate_rate with action accept; if no, call it with action decline.`,
+            }
+          : { ok: true, decision: 'accept', rate: decision.rate, agent_guidance: `They confirmed $${decision.rate}. Call book_load now.` };
+      case 'confirm':
+        return {
+          ok: true, decision: 'confirm', rate: decision.rate, needs_confirmation: true,
+          agent_guidance: `The rate on the table is $${decision.rate}. Ask them for a clear yes or no to book at that rate. Yes: negotiate_rate with action accept. No: action decline.`,
+        };
       case 'counter':
         return {
           ok: true,
@@ -329,6 +339,9 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     if (!s.otpVerified || !s.mcNumber) return { ok: false, error: 'identity_not_verified' };
     if (!n || n.status !== 'agreed' || n.agreedRate == null) {
       return { ok: false, error: 'no_agreed_rate', agent_guidance: 'A rate must be agreed before booking. Ask if they accept the current offer.' };
+    }
+    if (!n.confirmed) {
+      return { ok: false, error: 'not_confirmed', agent_guidance: `Not booked yet. Read back the load and $${n.agreedRate} and ask if they want it booked. If yes, call negotiate_rate with action accept, then book_load.` };
     }
     if (s.booking) return { ok: true, already_booked: true, booking_ref: s.booking.bookingRef, handoff_id: s.booking.handoffId };
 
