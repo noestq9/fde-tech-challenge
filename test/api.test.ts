@@ -197,6 +197,19 @@ describe('Simulated OTP (OTP_DELIVERY=simulated)', () => {
     expect(await post(a, '/v1/calls/s2/loads/search', { origin: 'TX' })).toMatchObject({ ok: false, error: 'identity_not_verified' });
   });
 
+  it('accepts 1218 even if the agent skipped send_verification_code', async () => {
+    const a = sim();
+    await post(a, '/v1/calls/s3/verify-carrier', { mc_number: '777777' });
+    expect(await post(a, '/v1/calls/s3/otp/verify', { code: '1218' })).toMatchObject({ verified: true });
+  });
+
+  it('still needs an eligible carrier before any code works', async () => {
+    const a = sim();
+    const r = await post(a, '/v1/calls/s4/otp/verify', { code: '1218' });
+    expect(r).toMatchObject({ verified: false, reason: 'no_code' });
+    expect(r.agent_guidance).toMatch(/send_verification_code/);
+  });
+
   it('needs ALLOW_OTP_DEMO=true in production', () => {
     const env = { API_KEY, NODE_ENV: 'production', OTP_DELIVERY: 'simulated' };
     expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow(/ALLOW_OTP_DEMO/);

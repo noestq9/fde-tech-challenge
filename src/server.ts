@@ -186,6 +186,13 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     const { callId } = callParams.parse(req.params);
     const body = z.object({ code: z.union([z.string(), z.number()]) }).parse(req.body);
     const s = sessions.get(callId);
+    // Simulated OTP: the demo code must work even if the agent skipped send_verification_code.
+    // Still only for a carrier that passed FMCSA, and attempts and lockout still apply.
+    if (simulatedOtp && !otp.stats(callId) && s.fmcsaStatus === 'eligible' && s.mcNumber) {
+      await otp.send(callId, s.mcNumber, { channel: 'sms', address: 'simulated' });
+      s.otp = { channel: 'sms', masked: 'the phone number on file', source: 'simulated' };
+      sessions.event(s, 'otp_sent', { channel: 'sms', source: 'simulated', implicit: true });
+    }
     const r = otp.verify(callId, String(body.code));
     sessions.event(s, 'otp_verify', { verified: r.verified, reason: r.verified ? undefined : r.reason });
     if (r.verified) {
@@ -195,6 +202,10 @@ export function buildServer(cfg: Config, deps: Deps = {}): FastifyInstance {
     if (r.reason === 'locked') {
       close(s, 'otp_failed', 'max_attempts');
       return { ok: true, verified: false, locked: true, agent_guidance: 'Too many wrong codes. Say you cannot continue on this call and a rep will follow up. End the call.' };
+    }
+    if (r.reason === 'no_code') {
+      // Nothing was sent on this call id: the agent skipped send_verification_code, or it failed.
+      return { ok: true, verified: false, reason: 'no_code', agent_guidance: 'No code has been sent on this call yet. Call send_verification_code now, tell them a new code is on its way, and ask them to read it back.' };
     }
     if (r.reason === 'expired') return { ok: true, verified: false, reason: 'expired', agent_guidance: 'The code expired. Offer to send a new one.' };
     return { ok: true, verified: false, reason: r.reason, attempts_left: r.attemptsLeft, agent_guidance: 'That code does not match. Ask them to read it again.' };
