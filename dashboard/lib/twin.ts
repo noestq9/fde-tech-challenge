@@ -4,8 +4,9 @@ import { sampleCalls, sampleOps } from './sample';
 
 // Twin gateway access. Server only: anyone who reads the browser bundle could otherwise
 // query the gateway as the organization (docs: "Using Twin in Apps").
-const gateway = process.env.NEXT_PUBLIC_TWIN_GATEWAY?.replace(/\/$/, '');
-const orgId = process.env.NEXT_PUBLIC_ORG_ID;
+// Inside HappyRobot Apps these come as NEXT_PUBLIC_*; outside (Railway) use the plain names.
+const gateway = (process.env.TWIN_GATEWAY_URL || process.env.NEXT_PUBLIC_TWIN_GATEWAY)?.replace(/\/$/, '');
+const orgId = process.env.TWIN_ORG_ID || process.env.NEXT_PUBLIC_ORG_ID;
 const table = process.env.TWIN_TABLE || 'carrier_calls';
 
 export const usingSampleData = !gateway || !orgId;
